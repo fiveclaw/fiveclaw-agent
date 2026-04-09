@@ -456,6 +456,22 @@ class DeployTool:
             client.connect(**kw, timeout=15)
             sftp = client.open_sftp()
 
+            def _sftp_rmtree(sftp: paramiko.SFTPClient, remote: str):
+                """Recursively delete a remote directory via SFTP (works on Linux + Windows SSH)."""
+                try:
+                    entries = sftp.listdir_attr(remote)
+                except FileNotFoundError:
+                    return  # already gone
+                import stat as _stat
+                for entry in entries:
+                    rpath = f"{remote}/{entry.filename}"
+                    if _stat.S_ISDIR(entry.st_mode):
+                        _sftp_rmtree(sftp, rpath)
+                        sftp.rmdir(rpath)
+                    else:
+                        sftp.remove(rpath)
+                sftp.rmdir(remote)
+
             def _upload(local: Path, remote: str):
                 try: sftp.mkdir(remote)
                 except OSError: pass
@@ -464,7 +480,7 @@ class DeployTool:
                     if item.is_dir(): _upload(item, r)
                     else: sftp.put(str(item), r)
 
-            client.exec_command(f"rm -rf '{remote_target}'")[1].channel.recv_exit_status()
+            _sftp_rmtree(sftp, remote_target)
             _upload(source, remote_target)
             sftp.close(); client.close()
             return json.dumps({"success": True, "resource": resource_name, "target": remote_target,
