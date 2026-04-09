@@ -18,7 +18,7 @@
 <p align="center">
   <a href="https://pypi.org/project/fiveclaw-agent/"><img src="https://img.shields.io/pypi/v/fiveclaw-agent?color=brand&label=fiveclaw-agent" alt="PyPI version" /></a>
   <a href="https://pypi.org/project/fiveclaw-agent/"><img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python 3.10+" /></a>
-  <a href="https://github.com/fiveclaw/fiveclaw-agent/blob/main/LICENSE"><img src="https://img.shields.io/github/license/fiveclaw/fiveclaw-agent?color=blue" alt="License: MIT" /></a>
+  <a href="https://github.com/fiveclaw/fiveclaw-agent/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT" /></a>
   <a href="https://pypi.org/project/fiveclaw-agent/"><img src="https://img.shields.io/pypi/dm/fiveclaw-agent?color=green&label=installs%2Fmo" alt="Monthly downloads" /></a>
 </p>
 
