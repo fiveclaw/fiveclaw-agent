@@ -16,6 +16,11 @@
 <h3 align="center">The local AI bridge between your FiveM server and your IDE.</h3>
 
 <p align="center">
+  <img src="https://img.shields.io/badge/tested%20on-Linux-brightgreen" alt="Tested on Linux" />
+  <img src="https://img.shields.io/badge/windows-compatibility%20WIP-orange" alt="Windows WIP" />
+</p>
+
+<p align="center">
   <a href="https://pypi.org/project/fiveclaw-agent/"><img src="https://img.shields.io/pypi/v/fiveclaw-agent?color=brand&label=fiveclaw-agent" alt="PyPI version" /></a>
   <a href="https://pypi.org/project/fiveclaw-agent/"><img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python 3.10+" /></a>
   <a href="https://github.com/fiveclaw/fiveclaw-agent/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT" /></a>
@@ -186,6 +191,16 @@ Restart your AI client after saving.
 Ask your AI: *"Run mcp_health to check my FiveClaw connection."*
 
 ---
+
+## Platform Support
+
+| Environment | Status |
+|-------------|--------|
+| **Linux** (local agent + Linux FiveM server) | ✅ Fully tested |
+| **macOS** (local agent) | ✅ Should work — untested |
+| **Windows** (local agent or Windows FiveM server) | 🚧 Work in progress |
+
+> **Note:** Development and testing has been done entirely on Linux (local machine + remote server). Windows support is being actively worked on — core functionality should work, but edge cases around SSH deployment and MySQL tooling on Windows may need ironing out. If you hit an issue on Windows, [open an issue](https://github.com/fiveclaw/fiveclaw-agent/issues).
 
 ## Requirements
 
