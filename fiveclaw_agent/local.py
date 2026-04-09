@@ -6,6 +6,7 @@ These run entirely on the user's machine. No source logic is sent to the VPS.
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -217,9 +218,8 @@ class MySQLTool:
                 "setup": "Set MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE in your .env",
             })
 
-        result = subprocess.run(["which", "mysql"], capture_output=True)
-        if result.returncode != 0:
-            return json.dumps({"error": "mysql client not installed."})
+        if shutil.which("mysql") is None:
+            return json.dumps({"error": "mysql client not installed. Download from https://dev.mysql.com/downloads/"})
 
         db = self.config.mysql
         cmd = [

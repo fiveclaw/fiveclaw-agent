@@ -589,7 +589,10 @@ def main():
         sys.exit(0)
 
     signal.signal(signal.SIGINT, _stop)
-    signal.signal(signal.SIGTERM, _stop)
+    try:
+        signal.signal(signal.SIGTERM, _stop)  # not available on Windows
+    except AttributeError:
+        pass
 
     transport = os.getenv("TRANSPORT", "streamable-http")
     host = os.getenv("HOST", "127.0.0.1")   # localhost only by default
