@@ -97,9 +97,9 @@ These run entirely on your machine. No API key needed.
 | ✅ `tool_syntax_check` | Check Lua syntax without running the server |
 | 📋 `read_latest_logs` | Tail FXServer, txAdmin, and resource logs |
 | 🗃 `tool_mysql_query` | Run queries against your FiveM MySQL database |
-| 🖥 `tool_server_control` | Start, stop, restart the FXServer via txAdmin |
-| 🔌 `tool_resource_control` | Start/stop/restart individual resources |
-| 📡 `tool_server_console` | Send console commands to the running server |
+| 🖥 `tool_server_control` | Start, stop, restart the FXServer via txAdmin or custom panel |
+| 🔌 `tool_resource_control` | Start/stop/restart individual resources via txAdmin or custom panel |
+| 📡 `tool_server_console` | Send console commands via txAdmin or custom panel |
 | 🚀 `deploy_resource` | SSH-deploy a resource directly to production |
 | 🧠 `context_remember` | Store persistent notes across AI sessions |
 
@@ -167,13 +167,17 @@ Add to your AI client's MCP config. Only `FIVECLAW_API_KEY` is required — remo
         "FIVECLAW_API_KEY":    "fc_live_YOUR_API_KEY_HERE",
         "FIVEM_PROJECT_ROOT":  "/path/to/your/fivem-server",
         "FIVEM_RESOURCES_DIR": "/path/to/your/fivem-server/resources",
+
         "TXADMIN_URL":         "http://localhost:40120",
         "TXADMIN_USER":        "admin",
         "TXADMIN_PASS":        "YOUR_TXADMIN_PASSWORD",
+
         "MYSQL_HOST":          "127.0.0.1",
         "MYSQL_USER":          "root",
         "MYSQL_PASSWORD":      "YOUR_MYSQL_PASSWORD",
         "MYSQL_DATABASE":      "fivem",
+        "MYSQL_EXTRA_DBS":     "{\"db2\":{\"host\":\"127.0.0.1\",\"port\":3306,\"user\":\"root\",\"password\":\"pass\",\"database\":\"db2\"}}",
+
         "FIVEM_SSH_HOST":      "YOUR_VPS_IP",
         "FIVEM_SSH_USER":      "root",
         "FIVEM_SSH_KEY":       "~/.ssh/id_rsa"
@@ -182,6 +186,33 @@ Add to your AI client's MCP config. Only `FIVECLAW_API_KEY` is required — remo
   }
 }
 ```
+
+### Custom Control Panel (alternative to txAdmin)
+
+If you run a custom admin panel instead of txAdmin, set `ADMIN_PANEL_TYPE=custom` and configure all four endpoints explicitly:
+
+```json
+{
+  "mcpServers": {
+    "fiveclaw": {
+      "command": "fiveclaw",
+      "env": {
+        "FIVECLAW_API_KEY":              "fc_live_YOUR_API_KEY_HERE",
+        "FIVEM_PROJECT_ROOT":            "/path/to/your/fivem-server",
+        "ADMIN_PANEL_TYPE":              "custom",
+        "ADMIN_PANEL_URL":               "http://localhost:30121",
+        "ADMIN_PANEL_STATUS_ENDPOINT":   "/api/server/status",
+        "ADMIN_PANEL_START_ENDPOINT":    "/api/server-control/start",
+        "ADMIN_PANEL_STOP_ENDPOINT":     "/api/server-control/stop",
+        "ADMIN_PANEL_COMMAND_ENDPOINT":  "/api/server-control/command",
+        "FIVEM_LOGS_DIR":                "/path/to/logs"
+      }
+    }
+  }
+}
+```
+
+> **Note:** `FIVEM_LOGS_DIR` is required when using `ADMIN_PANEL_TYPE=custom`. With txAdmin (the default), logs are auto-detected from `FIVEM_PROJECT_ROOT/logs`.
 
 Restart your AI client after saving.
 
