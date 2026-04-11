@@ -189,7 +189,7 @@ Add to your AI client's MCP config. Only `FIVECLAW_API_KEY` is required — remo
 
 ### Custom Control Panel (alternative to txAdmin)
 
-If you run a custom admin panel instead of txAdmin, set `ADMIN_PANEL_TYPE=custom` and configure all four endpoints explicitly:
+If you run a custom admin panel instead of txAdmin, replace the `TXADMIN_*` fields with `ADMIN_PANEL_*`. All four endpoints must be set explicitly, and `FIVEM_LOGS_DIR` is required.
 
 ```json
 {
@@ -199,13 +199,25 @@ If you run a custom admin panel instead of txAdmin, set `ADMIN_PANEL_TYPE=custom
       "env": {
         "FIVECLAW_API_KEY":              "fc_live_YOUR_API_KEY_HERE",
         "FIVEM_PROJECT_ROOT":            "/path/to/your/fivem-server",
+        "FIVEM_RESOURCES_DIR":           "/path/to/your/fivem-server/resources",
+
         "ADMIN_PANEL_TYPE":              "custom",
         "ADMIN_PANEL_URL":               "http://localhost:30121",
         "ADMIN_PANEL_STATUS_ENDPOINT":   "/api/server/status",
         "ADMIN_PANEL_START_ENDPOINT":    "/api/server-control/start",
         "ADMIN_PANEL_STOP_ENDPOINT":     "/api/server-control/stop",
         "ADMIN_PANEL_COMMAND_ENDPOINT":  "/api/server-control/command",
-        "FIVEM_LOGS_DIR":                "/path/to/logs"
+        "FIVEM_LOGS_DIR":                "/path/to/logs",
+
+        "MYSQL_HOST":                    "127.0.0.1",
+        "MYSQL_USER":                    "root",
+        "MYSQL_PASSWORD":                "YOUR_MYSQL_PASSWORD",
+        "MYSQL_DATABASE":                "fivem",
+        "MYSQL_EXTRA_DBS":               "{\"db2\":{\"host\":\"127.0.0.1\",\"port\":3306,\"user\":\"root\",\"password\":\"pass\",\"database\":\"db2\"}}",
+
+        "FIVEM_SSH_HOST":                "YOUR_VPS_IP",
+        "FIVEM_SSH_USER":                "root",
+        "FIVEM_SSH_KEY":                 "~/.ssh/id_rsa"
       }
     }
   }
