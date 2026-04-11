@@ -1,0 +1,131 @@
+# fiveclaw-agent
+
+> A local MCP (Model Context Protocol) server that bridges your AI coding client to your FiveM game server. Gives Claude, Cursor, Windsurf, and other AI IDEs direct access to your server files, MySQL databases, logs, server control, and FiveM-specific AI intelligence via the FiveClaw cloud platform.
+
+## What problem does this solve?
+
+FiveM server developers write Lua/JavaScript resources but their AI assistants have no context about their server — they can't see logs, query databases, restart resources, or look up FiveM-specific APIs. fiveclaw-agent solves this by running locally and connecting the AI to the live server environment.
+
+## Installation
+
+```bash
+pip install fiveclaw-agent
+pip install fiveclaw-agent[ssh]  # with SSH deploy support
+```
+
+Requires Python 3.10+. Needs a FiveClaw API key from https://fiveclaw.xyz/dashboard/keys
+
+## How to configure (MCP env block)
+
+```json
+{
+  "mcpServers": {
+    "fiveclaw": {
+      "command": "fiveclaw-agent",
+      "env": {
+        "FIVECLAW_API_KEY":    "fc_live_YOUR_KEY",
+        "FIVEM_PROJECT_ROOT":  "/path/to/fivem-server",
+        "TXADMIN_URL":         "http://localhost:40120",
+        "TXADMIN_USER":        "admin",
+        "TXADMIN_PASS":        "password",
+        "MYSQL_HOST":          "127.0.0.1",
+        "MYSQL_USER":          "root",
+        "MYSQL_PASSWORD":      "password",
+        "MYSQL_DATABASE":      "fivem",
+        "FIVEM_SSH_HOST":      "your-vps-ip",
+        "FIVEM_SSH_USER":      "root",
+        "FIVEM_SSH_KEY":       "~/.ssh/id_rsa"
+      }
+    }
+  }
+}
+```
+
+## Multiple MySQL databases
+
+Name extra databases with flat env vars — the agent auto-discovers them:
+
+```
+MYSQL_DB2_HOST=127.0.0.1
+MYSQL_DB2_USER=root
+MYSQL_DB2_PASSWORD=password
+MYSQL_DB2_DATABASE=second_db
+```
+
+Query a named DB: `tool_mysql_query(query="SELECT ...", db_name="db2")`
+
+## Custom Admin Panel (alternative to txAdmin)
+
+```
+ADMIN_PANEL_TYPE=custom
+ADMIN_PANEL_URL=http://localhost:30121
+ADMIN_PANEL_STATUS_ENDPOINT=/api/server/status
+ADMIN_PANEL_START_ENDPOINT=/api/server-control/start
+ADMIN_PANEL_STOP_ENDPOINT=/api/server-control/stop
+ADMIN_PANEL_COMMAND_ENDPOINT=/api/server-control/command
+FIVEM_LOGS_DIR=/path/to/logs
+```
+
+## Local tools (run on user's machine, no API key needed)
+
+- `repomap_generate` — Map all resources in the FiveM server directory
+- `tool_search` — Search Lua/JS source files across all resources
+- `tool_syntax_check` — Validate Lua syntax via luac
+- `read_latest_logs` — Read the latest FXServer log file (strips ANSI codes)
+- `tool_mysql_query(query, db_name)` — Execute SQL against any configured database
+- `tool_server_status` — Get current FiveM server status
+- `tool_server_control(action)` — Start / stop / restart the FXServer. action: "start"|"stop"|"restart"
+- `tool_resource_control(action, resource_name)` — Start/stop/restart a specific resource
+- `tool_server_console(command)` — Send a raw console command to the running server
+- `deploy_resource(resource_name)` — SSH-deploy a resource to the production server
+- `context_remember(key, value)` — Store a persistent note across AI sessions
+- `context_recall(key)` — Retrieve a stored note
+- `backup_resource(resource_name)` — Back up a resource before editing
+
+## Cloud tools (require FiveClaw API key)
+
+### fivem-mcp — all plans including free
+
+- `fivem_native(name)` — Look up any of 6,400+ FiveM/GTA native functions with parameters and examples
+- `fivem_docs(topic)` — ESX, QBCore, ox_lib, ox_core framework documentation
+- `fivem_get_best_practice(topic)` — Lua performance tips, sync patterns, common pitfalls
+- `fivem_get_anti_pattern(topic)` — What not to do and why, with corrected examples
+- `fivem_get_error_solution(error)` — Step-by-step fixes for common FiveM errors
+- `fivem_fetch_live_natives` — Fetch current native list directly from CFX
+
+### ai-fivem-dev-mcp — Pro and Enterprise plans
+
+- `resource_health_check(resource)` — Validate manifest, exports, load order
+- `scan_security(resource)` — Detect SQL injection, auth bypass, logic vulnerabilities
+- `validate_export_contracts` — Verify imports match their exported signatures
+- `trace_event_flow(event)` — Trace an event from trigger to all handlers
+- `test_generate(resource)` — Generate unit/event/database tests
+- `detect_duplicate_code` — Find copy-pasted code blocks across resources
+- `show_dependency_graph` — Visualize resource dependencies
+- `pattern_list` / `pattern_apply(name)` — Team scaffold templates
+
+## Supported AI clients
+
+- Claude Code (.mcp.json or ~/.claude.json)
+- Cursor (.cursor/mcp.json)
+- Windsurf (~/.codeium/windsurf/mcp_config.json)
+- Kilo Code (.kilocode/mcp.json)
+- Gemini CLI (~/.gemini/settings.json)
+
+## Common use cases
+
+- "Why is my ESX resource failing to start?" → read logs + health check
+- "Show me all players in the database" → MySQL query tool
+- "Restart the my-resource resource" → resource control tool
+- "What does GetPlayerPed do?" → native lookup
+- "Deploy my updated resource to the server" → SSH deploy tool
+- "Check my server for SQL injection vulnerabilities" → security scanner
+- "How do I convert this ESX job to QBCore?" → framework docs + pattern library
+
+## Links
+
+- Website: https://fiveclaw.xyz
+- Setup guide: https://fiveclaw.xyz/dashboard/download
+- Pricing: https://fiveclaw.xyz/pricing
+- PyPI: https://pypi.org/project/fiveclaw-agent/
+- GitHub: https://github.com/fiveclaw/fiveclaw-agent
