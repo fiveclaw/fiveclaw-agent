@@ -55,7 +55,9 @@ class Config:
         else:
             self.resources_dir = self.project_root / "resources"
 
-        self.logs_dir = self.project_root / "logs"
+        logs_override = os.getenv("FIVEM_LOGS_DIR", remote.get("logsDir", ""))
+        self.logs_dir = Path(logs_override) if logs_override else self.project_root / "logs"
+        self.logs_dir_explicit = bool(logs_override)
         self.context_dir = self.project_root / ".fiveclaw" / "context"
         self.context_dir.mkdir(parents=True, exist_ok=True)
 
@@ -81,11 +83,46 @@ class Config:
         self.txadmin_user = os.getenv("TXADMIN_USER", remote.get("txAdminUser", "") or "")
         self.txadmin_pass = os.getenv("TXADMIN_PASS", remote.get("txAdminPass", "") or "")
 
+        # Admin panel (txadmin | custom)
+        self.admin_panel_type = os.getenv("ADMIN_PANEL_TYPE", remote.get("adminPanelType", "txadmin"))
+        self.custom_panel_url = os.getenv("ADMIN_PANEL_URL",  remote.get("adminPanelUrl",  ""))
+
+        # Custom panel endpoints — must be set in MCP env config
+        self.custom_panel_status_endpoint  = os.getenv("ADMIN_PANEL_STATUS_ENDPOINT",  "")
+        self.custom_panel_start_endpoint   = os.getenv("ADMIN_PANEL_START_ENDPOINT",   "")
+        self.custom_panel_stop_endpoint    = os.getenv("ADMIN_PANEL_STOP_ENDPOINT",    "")
+        self.custom_panel_command_endpoint = os.getenv("ADMIN_PANEL_COMMAND_ENDPOINT", "")
+
+        # Extra named databases via flat env vars: MYSQL_<NAME>_HOST, _USER, _PASSWORD, _DATABASE, _PORT
+        # e.g. MYSQL_TRUCKING_HOST=127.0.0.1, MYSQL_TRUCKING_USER=root, ...
+        import re as _re
+        self.extra_databases: dict = {}
+        for _key in os.environ:
+            _m = _re.match(r'^MYSQL_([A-Z0-9]+(?:_[A-Z0-9]+)*)_HOST$', _key)
+            if _m:
+                _name = _m.group(1).lower()
+                _pfx  = f"MYSQL_{_m.group(1)}"
+                self.extra_databases[_name] = {
+                    "host":     os.environ[_key],
+                    "port":     int(os.getenv(f"{_pfx}_PORT", "3306")),
+                    "user":     os.getenv(f"{_pfx}_USER",     ""),
+                    "password": os.getenv(f"{_pfx}_PASSWORD", ""),
+                    "database": os.getenv(f"{_pfx}_DATABASE", ""),
+                }
+
     def has_ssh(self) -> bool:
         return bool(self.ssh["host"] and self.ssh["user"])
 
-    def has_mysql(self) -> bool:
-        return bool(self.mysql["user"] and self.mysql["database"])
+    def has_mysql(self, name: str = "default") -> bool:
+        if name != "default" and name not in self.extra_databases:
+            return False
+        db = self.get_db(name)
+        return bool(db.get("user") and db.get("database"))
+
+    def get_db(self, name: str = "default") -> dict:
+        if name != "default" and name in self.extra_databases:
+            return self.extra_databases[name]
+        return self.mysql
 
     def _fetch_remote_config(self) -> dict:
         """Fetch server config from the FiveClaw dashboard API. Returns {} on failure."""

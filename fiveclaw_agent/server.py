@@ -4,7 +4,7 @@ FiveClaw Agent — local MCP server.
 Users run this on their machine and add it to their Claude Desktop config:
   { "fiveclaw": { "url": "http://localhost:5200/mcp" } }
 
-Local tools (file I/O, SSH, MySQL, txAdmin) run on the user's machine.
+Local tools (file I/O, SSH, MySQL, txAdmin/custom panel) run on the user's machine.
 Intelligence tools (analysis, AI review, docs, patterns) relay to the FiveClaw VPS.
 The VPS logic is never distributed — only results come back.
 """
@@ -15,7 +15,7 @@ from typing import Optional
 from fastmcp import FastMCP
 
 from .config import Config
-from .local import RepoMapTool, FileTool, MySQLTool, TxAdminTool, DeployTool, ContextTool, collect_resource_files
+from .local import RepoMapTool, FileTool, MySQLTool, TxAdminTool, CustomPanelTool, DeployTool, ContextTool, collect_resource_files
 from .remote import RemoteClient
 
 # ─── Boot ─────────────────────────────────────────────────────────────────────
@@ -31,7 +31,7 @@ remote  = RemoteClient(config.api_key, config.api_url)
 repomap = RepoMapTool(config)
 files   = FileTool(config)
 mysql   = MySQLTool(config)
-txadmin = TxAdminTool(config)
+txadmin = CustomPanelTool(config) if config.admin_panel_type == "custom" else TxAdminTool(config)
 deploy  = DeployTool(config)
 context = ContextTool(config)
 
@@ -159,31 +159,40 @@ async def tool_syntax_check(file_path: str) -> str:
 @server.tool()
 async def read_latest_logs(lines: int = 100, pattern: Optional[str] = None) -> str:
     """Read the latest FiveM server log file."""
+    if config.admin_panel_type == "custom" and not config.logs_dir_explicit:
+        import json as _j
+        return _j.dumps({
+            "error": "FIVEM_LOGS_DIR not set",
+            "hint": "Custom panel mode requires FIVEM_LOGS_DIR to be set in your MCP env config.",
+        })
     return await files.read_logs(lines, pattern)
 
 @server.tool()
-async def tool_mysql_query(query: str) -> str:
-    """Execute a SQL query against your locally configured MySQL database."""
-    return await mysql.query(query)
+async def tool_mysql_query(query: str, db_name: str = "default") -> str:
+    """Execute a SQL query against a configured MySQL database.
+
+    db_name: 'default' or a named database from MYSQL_EXTRA_DBS (e.g. 'qbcore', 'trucking', 'hz').
+    """
+    return await mysql.query(query, db_name)
 
 @server.tool()
 async def tool_server_status() -> str:
-    """Check FiveM server status and recent log via txAdmin."""
+    """Check FiveM server status via txAdmin or custom control panel."""
     return await txadmin.server_status()
 
 @server.tool()
 async def tool_resource_control(action: str, resource_name: str) -> str:
-    """Start, stop, restart, or ensure a resource via txAdmin. action: 'start'|'stop'|'restart'|'ensure'."""
+    """Start, stop, restart, or ensure a resource via txAdmin or custom panel. action: 'start'|'stop'|'restart'|'ensure'."""
     return await txadmin.resource_control(action, resource_name)
 
 @server.tool()
 async def tool_server_console(command: str) -> str:
-    """Send a command via txAdmin. Supports: restart/start/stop/ensure <resource>, restart_server, stop_server."""
+    """Send a raw console command via txAdmin or custom panel."""
     return await txadmin.server_console(command)
 
 @server.tool()
 async def tool_server_control(action: str) -> str:
-    """Control the entire FiveM server via txAdmin. action: 'restart'|'start'|'stop'."""
+    """Control the entire FiveM server via txAdmin or custom panel. action: 'restart'|'start'|'stop'."""
     return await txadmin.server_control(action)
 
 @server.tool()

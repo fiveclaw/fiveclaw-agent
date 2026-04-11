@@ -191,18 +191,22 @@ class FileTool:
 
     async def read_logs(self, lines: int = 100, pattern: Optional[str] = None) -> str:
         if not self.config.logs_dir.exists():
-            return json.dumps({"error": f"Logs directory not found: {self.config.logs_dir}"})
+            return json.dumps({
+                "error": f"Logs directory not found: {self.config.logs_dir}",
+                "hint": "Set FIVEM_PROJECT_ROOT to your FiveM server directory.",
+            })
 
-        log_files = sorted(self.config.logs_dir.glob("*.log"), key=lambda f: f.stat().st_mtime, reverse=True)
-        if not log_files:
-            return json.dumps({"error": "No log files found."})
+        candidates = sorted(self.config.logs_dir.glob("*.log"), key=lambda f: f.stat().st_mtime, reverse=True)
+        if not candidates:
+            return json.dumps({"error": f"No log files found in {self.config.logs_dir}"})
 
-        latest = log_files[0]
-        all_lines = latest.read_text(errors="ignore").splitlines()[-lines:]
+        latest = candidates[0]
+        ansi = re.compile(r'\x1b(\[[0-9;]*[mGKJHF]|\][^\x07]*\x07)')
+        all_lines = [ansi.sub("", l) for l in latest.read_text(errors="ignore").splitlines()[-lines:]]
         if pattern:
             all_lines = [l for l in all_lines if re.search(pattern, l, re.IGNORECASE)]
 
-        return json.dumps({"file": latest.name, "lines": all_lines, "count": len(all_lines)})
+        return json.dumps({"file": str(latest), "lines": all_lines, "count": len(all_lines)})
 
 
 # ─── MySQL ────────────────────────────────────────────────────────────────────
@@ -211,21 +215,23 @@ class MySQLTool:
     def __init__(self, config: Config):
         self.config = config
 
-    async def query(self, query: str) -> str:
-        if not self.config.has_mysql():
+    async def query(self, query: str, db_name: str = "default") -> str:
+        if not self.config.has_mysql(db_name):
+            available = ["default"] + list(self.config.extra_databases.keys())
             return json.dumps({
-                "error": "MySQL not configured.",
-                "setup": "Set MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE in your .env",
+                "error": f"MySQL database '{db_name}' not configured.",
+                "available": available,
+                "setup": "Set MYSQL_USER/MYSQL_PASSWORD/MYSQL_DATABASE for default, or MYSQL_EXTRA_DBS for named databases.",
             })
 
         if shutil.which("mysql") is None:
             return json.dumps({"error": "mysql client not installed. Download from https://dev.mysql.com/downloads/"})
 
-        db = self.config.mysql
+        db = self.config.get_db(db_name)
         cmd = [
             "mysql",
-            "-h", db["host"],
-            "-P", str(db["port"]),
+            "-h", db.get("host", "127.0.0.1"),
+            "-P", str(db.get("port", 3306)),
             "-u", db["user"],
             f"-p{db['password']}",
             "-N", "-e", query, db["database"],
@@ -395,6 +401,115 @@ class TxAdminTool:
     async def server_control(self, action: str) -> str:
         """POST /fxserver/controls — restart/start/stop the whole server."""
         return self._post("/fxserver/controls", {"action": action})
+
+
+# ─── Custom Panel ─────────────────────────────────────────────────────────────
+
+class CustomPanelTool:
+    """Controls a custom REST admin panel (e.g. trucking admin-panel).
+
+    No auth required.  Configure via MCP env:
+      ADMIN_PANEL_TYPE=custom
+      ADMIN_PANEL_URL=http://your-panel-host:port
+
+    REST API expected:
+      GET  /api/server/status
+      POST /api/server-control/command  { "command": "<cmd>" }
+    """
+
+    def __init__(self, config: Config):
+        self._url     = config.custom_panel_url.rstrip("/") if config.custom_panel_url else ""
+        self._ep_status  = config.custom_panel_status_endpoint
+        self._ep_start   = config.custom_panel_start_endpoint
+        self._ep_stop    = config.custom_panel_stop_endpoint
+        self._ep_command = config.custom_panel_command_endpoint
+
+    def _not_configured(self, missing: str) -> str:
+        return json.dumps({
+            "error": "custom_panel_not_configured",
+            "hint":  f"Set {missing} in your MCP env config.",
+        })
+
+    def _get(self, path: str, env_var: str = "ADMIN_PANEL_STATUS_ENDPOINT") -> str:
+        import urllib.request
+        if not self._url:
+            return self._not_configured("ADMIN_PANEL_URL")
+        if not path:
+            return self._not_configured(env_var)
+        try:
+            with urllib.request.urlopen(f"{self._url}{path}", timeout=10) as r:
+                return r.read().decode()
+        except Exception as e:
+            return json.dumps({"error": str(e), "hint": f"Is the panel running at {self._url}?"})
+
+    def _post_cmd(self, command: str) -> str:
+        import urllib.request
+        if not self._url:
+            return self._not_configured("ADMIN_PANEL_URL")
+        if not self._ep_command:
+            return self._not_configured("ADMIN_PANEL_COMMAND_ENDPOINT")
+        data = json.dumps({"command": command}).encode()
+        req = urllib.request.Request(
+            f"{self._url}{self._ep_command}",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.read().decode()
+        except Exception as e:
+            return json.dumps({"error": str(e), "hint": f"Is the panel running at {self._url}?"})
+
+    async def server_status(self) -> str:
+        return self._get(self._ep_status, "ADMIN_PANEL_STATUS_ENDPOINT")
+
+    async def resource_control(self, action: str, resource_name: str) -> str:
+        action_map = {
+            "start":   "ensure",
+            "ensure":  "ensure",
+            "stop":    "stop",
+            "restart": "restart",
+        }
+        cmd = f"{action_map.get(action.lower(), action)} {resource_name}"
+        return self._post_cmd(cmd)
+
+    async def server_console(self, command: str) -> str:
+        return self._post_cmd(command)
+
+    async def server_control(self, action: str) -> str:
+        """start/stop via dedicated endpoints; restart = stop+start; refresh = console command."""
+        action = action.lower().strip()
+        if action == "restart":
+            self._post_endpoint(self._ep_stop, {})
+            import asyncio; await asyncio.sleep(3)
+            return self._post_endpoint(self._ep_start, {})
+        if action == "start":
+            return self._post_endpoint(self._ep_start, {})
+        if action == "stop":
+            return self._post_endpoint(self._ep_stop, {})
+        if action == "refresh":
+            return self._post_cmd("refresh")
+        return self._post_cmd(action)
+
+    def _post_endpoint(self, path: str, payload: dict) -> str:
+        import urllib.request
+        if not self._url:
+            return self._not_configured("ADMIN_PANEL_URL")
+        if not path:
+            return self._not_configured("ADMIN_PANEL_START_ENDPOINT or ADMIN_PANEL_STOP_ENDPOINT")
+        data = json.dumps(payload).encode()
+        req = urllib.request.Request(
+            f"{self._url}{path}",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r:
+                return r.read().decode()
+        except Exception as e:
+            return json.dumps({"error": str(e), "hint": f"Is the panel running at {self._url}?"})
 
 
 # ─── Deploy ───────────────────────────────────────────────────────────────────
