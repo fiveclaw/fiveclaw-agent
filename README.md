@@ -176,7 +176,10 @@ Add to your AI client's MCP config. Only `FIVECLAW_API_KEY` is required — remo
         "MYSQL_USER":          "root",
         "MYSQL_PASSWORD":      "YOUR_MYSQL_PASSWORD",
         "MYSQL_DATABASE":      "fivem",
-        "MYSQL_EXTRA_DBS":     "{\"db2\":{\"host\":\"127.0.0.1\",\"port\":3306,\"user\":\"root\",\"password\":\"pass\",\"database\":\"db2\"}}",
+        "MYSQL_TRUCKING_HOST":     "127.0.0.1",
+        "MYSQL_TRUCKING_USER":     "root",
+        "MYSQL_TRUCKING_PASSWORD": "YOUR_PASSWORD",
+        "MYSQL_TRUCKING_DATABASE": "trucking_db",
 
         "FIVEM_SSH_HOST":      "YOUR_VPS_IP",
         "FIVEM_SSH_USER":      "root",
@@ -213,7 +216,10 @@ If you run a custom admin panel instead of txAdmin, replace the `TXADMIN_*` fiel
         "MYSQL_USER":                    "root",
         "MYSQL_PASSWORD":                "YOUR_MYSQL_PASSWORD",
         "MYSQL_DATABASE":                "fivem",
-        "MYSQL_EXTRA_DBS":               "{\"db2\":{\"host\":\"127.0.0.1\",\"port\":3306,\"user\":\"root\",\"password\":\"pass\",\"database\":\"db2\"}}",
+        "MYSQL_TRUCKING_HOST":            "127.0.0.1",
+        "MYSQL_TRUCKING_USER":            "root",
+        "MYSQL_TRUCKING_PASSWORD":        "YOUR_PASSWORD",
+        "MYSQL_TRUCKING_DATABASE":        "trucking_db",
 
         "FIVEM_SSH_HOST":                "YOUR_VPS_IP",
         "FIVEM_SSH_USER":                "root",
