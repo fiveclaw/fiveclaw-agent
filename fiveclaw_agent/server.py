@@ -603,18 +603,18 @@ def main():
     except AttributeError:
         pass
 
-    transport = os.getenv("TRANSPORT", "streamable-http")
+    transport = os.getenv("TRANSPORT", "stdio")
     host = os.getenv("HOST", "127.0.0.1")   # localhost only by default
     port = int(os.getenv("PORT", "5200"))
 
-    path = "/sse" if transport == "sse" else "/mcp"
-    print(f"[FiveClaw Agent] Starting on http://{host}:{port}{path} (transport={transport})", file=sys.stderr)
-    print(f"[FiveClaw Agent] Project root: {config.project_root}", file=sys.stderr)
-
-    if transport == "streamable-http":
-        server.run(transport="streamable-http", host=host, port=port)
-    elif transport == "sse":
-        server.run(transport="sse", host=host, port=port)
+    if transport in ("streamable-http", "sse"):
+        path = "/sse" if transport == "sse" else "/mcp"
+        print(f"[FiveClaw Agent] Starting on http://{host}:{port}{path} (transport={transport})", file=sys.stderr)
+        print(f"[FiveClaw Agent] Project root: {config.project_root}", file=sys.stderr)
+        if transport == "streamable-http":
+            server.run(transport="streamable-http", host=host, port=port)
+        else:
+            server.run(transport="sse", host=host, port=port)
     else:
         server.run(transport="stdio")
 

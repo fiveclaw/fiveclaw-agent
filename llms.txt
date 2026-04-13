@@ -21,7 +21,7 @@ Requires Python 3.10+. Needs a FiveClaw API key from https://fiveclaw.xyz/dashbo
 {
   "mcpServers": {
     "fiveclaw": {
-      "command": "fiveclaw-agent",
+      "command": "fiveclaw",
       "env": {
         "FIVECLAW_API_KEY":    "fc_live_YOUR_KEY",
         "FIVEM_PROJECT_ROOT":  "/path/to/fivem-server",
