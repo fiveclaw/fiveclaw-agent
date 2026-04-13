@@ -17,7 +17,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/tested%20on-Linux-brightgreen" alt="Tested on Linux" />
-  <img src="https://img.shields.io/badge/windows-compatibility%20WIP-orange" alt="Windows WIP" />
+  <img src="https://img.shields.io/badge/windows-supported-blue" alt="Windows supported" />
 </p>
 
 <p align="center">
@@ -158,6 +158,21 @@ The interactive setup wizard at [fiveclaw.xyz/dashboard/download](https://fivecl
 
 Add to your AI client's MCP config. Only `FIVECLAW_API_KEY` is required — remove any lines you don't use.
 
+> **Windows users:** Due to Python's pipe-buffering behaviour on Windows, use `python` as the command and pass `-u -m fiveclaw_agent` as args instead of calling the entry point directly:
+> ```json
+> {
+>   "mcpServers": {
+>     "fiveclaw": {
+>       "command": "python",
+>       "args": ["-u", "-m", "fiveclaw_agent"],
+>       "env": { "FIVECLAW_API_KEY": "fc_live_YOUR_API_KEY_HERE", "TRANSPORT": "stdio" }
+>     }
+>   }
+> }
+> ```
+> The `-u` flag forces unbuffered I/O at the interpreter level, which is required for the MCP stdio transport to work correctly in a pipe.
+
+**Linux / macOS:**
 ```json
 {
   "mcpServers": {
@@ -250,9 +265,9 @@ Ask your AI: *"Run mcp_health to check my FiveClaw connection."*
 |-------------|--------|
 | **Linux** (local agent + Linux FiveM server) | ✅ Fully tested |
 | **macOS** (local agent) | ✅ Should work — untested |
-| **Windows** (local agent or Windows FiveM server) | 🚧 Work in progress |
+| **Windows** (local agent or Windows FiveM server) | ✅ Supported — use `python -u -m fiveclaw_agent` (see Windows config above) |
 
-> **Note:** Development and testing has been done entirely on Linux (local machine + remote server). Windows support is being actively worked on — core functionality should work, but edge cases around SSH deployment and MySQL tooling on Windows may need ironing out. If you hit an issue on Windows, [open an issue](https://github.com/fiveclaw/fiveclaw-agent/issues).
+> **Note:** Windows is supported. Use `python -u -m fiveclaw_agent` instead of the `fiveclaw` entry point — this bypasses Windows pipe-buffering issues with the `.exe` launcher. SSH deployment and MySQL on Windows should work; open an issue if you hit edge cases.
 
 ## Requirements
 

@@ -616,6 +616,13 @@ def main():
         else:
             server.run(transport="sse", host=host, port=port)
     else:
+        # Force unbuffered stdout for stdio transport — critical on Windows where
+        # Python switches to fully-buffered mode when stdout is connected to a pipe.
+        # The MCP client (Claude Code, Cursor, etc.) never receives responses otherwise.
+        import io as _io
+        sys.stdout = _io.TextIOWrapper(
+            sys.stdout.buffer, line_buffering=True, write_through=True
+        )
         server.run(transport="stdio")
 
 

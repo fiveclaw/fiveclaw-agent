@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fiveclaw-agent"
-version = "1.1.7"
+version = "1.1.8"
 description = "Local MCP agent for FiveClaw — FiveM AI development tools"
 readme = "README.md"
 license = { text = "MIT" }
