@@ -83,9 +83,8 @@ class RepoMapTool:
             return json.dumps({"error": f"Resources directory not found: {self.config.resources_dir}"})
 
         resources = {}
-        for rdir in self.config.resources_dir.iterdir():
-            if not rdir.is_dir():
-                continue
+
+        def _scan(rdir: Path):
             info: dict = {"name": rdir.name, "files": [], "exports": [], "events": []}
             for f in rdir.rglob("*.lua"):
                 info["files"].append(str(f.relative_to(rdir)))
@@ -96,6 +95,17 @@ class RepoMapTool:
                 except Exception:
                     pass
             resources[rdir.name] = info
+
+        for d in self.config.resources_dir.iterdir():
+            if not d.is_dir():
+                continue
+            if (d / "fxmanifest.lua").exists():
+                _scan(d)
+            else:
+                # Category folder (e.g. [local], [system]) — index each child resource
+                for sub in d.iterdir():
+                    if sub.is_dir() and (sub / "fxmanifest.lua").exists():
+                        _scan(sub)
 
         result = {"resources": resources, "count": len(resources)}
         self._cache_file.parent.mkdir(parents=True, exist_ok=True)
@@ -184,10 +194,51 @@ class FileTool:
         if not p.exists():
             return json.dumps({"error": f"File not found: {file_path}"})
 
-        result = subprocess.run(["luac", "-p", str(p)], capture_output=True, text=True)
-        if result.returncode == 0:
-            return json.dumps({"valid": True, "file": str(p)})
-        return json.dumps({"valid": False, "error": result.stderr.strip()})
+        code = p.read_text(errors="ignore")
+
+        # 1. luac binary — explicit LUAC_PATH or found in PATH
+        luac_bin = self.config.luac_path or shutil.which("luac")
+        if luac_bin:
+            result = subprocess.run([luac_bin, "-p", str(p)], capture_output=True, text=True)
+            if result.returncode == 0:
+                return json.dumps({"valid": True, "file": str(p), "checker": "luac"})
+            return json.dumps({"valid": False, "error": result.stderr.strip(), "checker": "luac"})
+
+        # 2. lupa (embedded LuaJIT) — native cross-platform compiler check, no binary needed
+        try:
+            import lupa  # type: ignore
+            _lua = lupa.LuaRuntime(unpack_returned_tuples=True)
+            _checker = _lua.eval(
+                'function(code) '
+                '  local f, err = load(code, "@' + p.name + '", "t") '
+                '  if f then return true, nil else return false, err end '
+                'end'
+            )
+            ok, err = _checker(code)
+            if ok:
+                return json.dumps({"valid": True, "file": str(p), "checker": "lupa"})
+            return json.dumps({"valid": False, "error": err or "Syntax error", "checker": "lupa"})
+        except ImportError:
+            pass
+
+        # 3. luaparser — pure Python fallback
+        try:
+            from luaparser import ast as _lua_ast
+            try:
+                _lua_ast.parse(code)
+                return json.dumps({"valid": True, "file": str(p), "checker": "luaparser"})
+            except Exception as e:
+                line = getattr(e, "line", None) or getattr(e, "lineno", None)
+                err = {"valid": False, "error": str(e), "checker": "luaparser"}
+                if line:
+                    err["line"] = line
+                return json.dumps(err)
+        except ImportError:
+            pass
+
+        return json.dumps({
+            "error": "No Lua checker available. Run: pip install lupa",
+        })
 
     async def read_logs(self, lines: int = 100, pattern: Optional[str] = None) -> str:
         if not self.config.logs_dir.exists():
@@ -200,7 +251,9 @@ class FileTool:
         if not candidates:
             return json.dumps({"error": f"No log files found in {self.config.logs_dir}"})
 
-        latest = candidates[0]
+        # Prefer fxserver.log (FiveM's main server log) — it's far more detailed than server.log
+        preferred = self.config.logs_dir / "fxserver.log"
+        latest = preferred if preferred.exists() else candidates[0]
         ansi = re.compile(r'\x1b(\[[0-9;]*[mGKJHF]|\][^\x07]*\x07)')
         all_lines = [ansi.sub("", l) for l in latest.read_text(errors="ignore").splitlines()[-lines:]]
         if pattern:
@@ -224,12 +277,33 @@ class MySQLTool:
                 "setup": "Set MYSQL_USER/MYSQL_PASSWORD/MYSQL_DATABASE for default, or MYSQL_EXTRA_DBS for named databases.",
             })
 
-        if shutil.which("mysql") is None:
-            return json.dumps({"error": "mysql client not installed. Download from https://dev.mysql.com/downloads/"})
+        # Explicit MYSQL_BIN_DIR takes priority — avoids Windows PATH inheritance issues
+        if self.config.mysql_bin_dir:
+            import sys as _sys
+            _exe = "mysql.exe" if _sys.platform == "win32" else "mysql"
+            mysql_bin = str(Path(self.config.mysql_bin_dir) / _exe)
+        else:
+            mysql_bin = shutil.which("mysql")
+            if mysql_bin is None:
+                import sys as _sys
+                if _sys.platform == "win32":
+                    import glob as _glob
+                    for _pattern in [
+                        r"C:\Program Files\MariaDB*\bin\mysql.exe",
+                        r"C:\Program Files\MySQL\MySQL Server*\bin\mysql.exe",
+                        r"C:\Program Files (x86)\MariaDB*\bin\mysql.exe",
+                        r"C:\Program Files (x86)\MySQL\MySQL Server*\bin\mysql.exe",
+                    ]:
+                        _found = _glob.glob(_pattern)
+                        if _found:
+                            mysql_bin = _found[0]
+                            break
+            if mysql_bin is None:
+                return json.dumps({"error": "mysql client not found. Set MYSQL_BIN_DIR to your MariaDB/MySQL bin directory (e.g. C:/Program Files/MariaDB 12.2/bin)."})
 
         db = self.config.get_db(db_name)
         cmd = [
-            "mysql",
+            mysql_bin,
             "-h", db.get("host", "127.0.0.1"),
             "-P", str(db.get("port", 3306)),
             "-u", db["user"],
@@ -391,10 +465,17 @@ class TxAdminTool:
             return self._post("/fxserver/controls", {"action": "restart"})
         if verb == "stop_server" or (verb == "stop" and not arg):
             return self._post("/fxserver/controls", {"action": "stop"})
+        if verb == "refresh" and not arg:
+            return self._post("/fxserver/commands", {"action": "refresh_res", "parameter": ""})
 
         return json.dumps({
             "error": "unsupported_command",
-            "hint":  "txAdmin v8 HTTP API supports: restart/start/stop/ensure <resource>, restart_server, stop_server",
+            "hint": (
+                "txAdmin v8 HTTP API supports structured commands only: "
+                "start/stop/restart/ensure <resource>, refresh [resource], restart_server, stop_server. "
+                "For arbitrary console commands, switch to a custom panel (ADMIN_PANEL_TYPE=custom) "
+                "with an ADMIN_PANEL_COMMAND_ENDPOINT that forwards raw input."
+            ),
             "command": command,
         })
 
@@ -512,6 +593,122 @@ class CustomPanelTool:
             return json.dumps({"error": str(e), "hint": f"Is the panel running at {self._url}?"})
 
 
+# ─── SSH ──────────────────────────────────────────────────────────────────────
+
+class SSHTool:
+    """General-purpose SSH access — run commands, browse dirs, read/write files."""
+
+    def __init__(self, config: Config):
+        self.config = config
+
+    def _not_configured(self) -> str:
+        return json.dumps({
+            "error": "SSH not configured",
+            "hint": "Set FIVEM_SSH_HOST and FIVEM_SSH_USER in your MCP env config (optionally FIVEM_SSH_KEY, FIVEM_SSH_PORT).",
+        })
+
+    def _connect(self):
+        import paramiko
+        cfg = self.config.ssh
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        kw: dict = {"hostname": cfg["host"], "port": cfg["port"], "username": cfg["user"]}
+        if cfg.get("key_path"):
+            kw["key_filename"] = cfg["key_path"]
+        if cfg.get("passphrase"):
+            kw["passphrase"] = cfg["passphrase"]
+        client.connect(**kw, timeout=15)
+        return client
+
+    async def run_command(self, command: str, timeout: int = 30) -> str:
+        """Execute a shell command on the remote server."""
+        if not self.config.has_ssh():
+            return self._not_configured()
+        try:
+            client = self._connect()
+            _, stdout, stderr = client.exec_command(command, timeout=timeout)
+            out  = stdout.read().decode(errors="replace")
+            err  = stderr.read().decode(errors="replace")
+            code = stdout.channel.recv_exit_status()
+            client.close()
+            return json.dumps({"stdout": out, "stderr": err, "exit_code": code, "command": command})
+        except Exception as e:
+            return json.dumps({"error": str(e), "command": command})
+
+    async def list_dir(self, path: str = ".") -> str:
+        """List files and directories at a remote path."""
+        if not self.config.has_ssh():
+            return self._not_configured()
+        try:
+            import stat as _stat
+            client = self._connect()
+            sftp = client.open_sftp()
+            entries = sftp.listdir_attr(path)
+            items = []
+            for e in sorted(entries, key=lambda x: x.filename):
+                is_dir = _stat.S_ISDIR(e.st_mode or 0)
+                items.append({
+                    "name":     e.filename,
+                    "type":     "dir" if is_dir else "file",
+                    "size":     e.st_size,
+                    "modified": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(e.st_mtime or 0)),
+                })
+            sftp.close(); client.close()
+            return json.dumps({"path": path, "entries": items, "count": len(items)})
+        except Exception as e:
+            return json.dumps({"error": str(e), "path": path})
+
+    async def read_file(self, path: str) -> str:
+        """Read a file from the remote server (capped at 100 KB)."""
+        if not self.config.has_ssh():
+            return self._not_configured()
+        MAX = 100_000
+        try:
+            client = self._connect()
+            sftp = client.open_sftp()
+            size = sftp.stat(path).st_size or 0
+            with sftp.open(path, "r") as f:
+                content = f.read(MAX).decode(errors="replace")
+            sftp.close(); client.close()
+            return json.dumps({"path": path, "content": content,
+                               "truncated": size > MAX, "size": size})
+        except Exception as e:
+            return json.dumps({"error": str(e), "path": path})
+
+    async def write_file(self, path: str, content: str) -> str:
+        """Write content to a file on the remote server."""
+        if not self.config.has_ssh():
+            return self._not_configured()
+        try:
+            client = self._connect()
+            sftp = client.open_sftp()
+            with sftp.open(path, "w") as f:
+                f.write(content)
+            sftp.close(); client.close()
+            return json.dumps({"success": True, "path": path, "bytes": len(content.encode())})
+        except Exception as e:
+            return json.dumps({"error": str(e), "path": path})
+
+    async def stat(self, path: str) -> str:
+        """Get metadata (size, type, modified time) for a remote file or directory."""
+        if not self.config.has_ssh():
+            return self._not_configured()
+        try:
+            import stat as _stat
+            client = self._connect()
+            sftp = client.open_sftp()
+            st = sftp.stat(path)
+            sftp.close(); client.close()
+            return json.dumps({
+                "path":     path,
+                "type":     "dir" if _stat.S_ISDIR(st.st_mode or 0) else "file",
+                "size":     st.st_size,
+                "modified": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(st.st_mtime or 0)),
+            })
+        except Exception as e:
+            return json.dumps({"error": str(e), "path": path})
+
+
 # ─── Deploy ───────────────────────────────────────────────────────────────────
 
 class DeployTool:
@@ -520,6 +717,14 @@ class DeployTool:
 
     async def deploy(self, resource_name: str, target: str = "production") -> str:
         source = self.config.resources_dir / resource_name
+        if not source.exists():
+            # Search category subdirs (e.g. [local]/character-select)
+            for cat in self.config.resources_dir.iterdir():
+                if cat.is_dir():
+                    candidate = cat / resource_name
+                    if candidate.exists():
+                        source = candidate
+                        break
         if not source.exists():
             return json.dumps({"error": f"Resource not found: {resource_name}"})
 
@@ -550,10 +755,7 @@ class DeployTool:
         })
 
     async def _deploy_ssh(self, resource_name: str, source: Path) -> str:
-        try:
-            import paramiko
-        except ImportError:
-            return json.dumps({"error": "paramiko not installed. Run: pip install fiveclaw-agent[ssh]"})
+        import paramiko
 
         remote_res = os.getenv("FIVEM_REMOTE_RESOURCES_DIR", "")
         if not remote_res:
@@ -568,6 +770,8 @@ class DeployTool:
             kw: dict = {"hostname": ssh_cfg["host"], "port": ssh_cfg["port"], "username": ssh_cfg["user"]}
             if ssh_cfg.get("key_path"):
                 kw["key_filename"] = ssh_cfg["key_path"]
+            if ssh_cfg.get("passphrase"):
+                kw["passphrase"] = ssh_cfg["passphrase"]
             client.connect(**kw, timeout=15)
             sftp = client.open_sftp()
 

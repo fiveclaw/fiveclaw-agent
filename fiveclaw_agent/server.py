@@ -15,7 +15,7 @@ from typing import Optional
 from fastmcp import FastMCP
 
 from .config import Config
-from .local import RepoMapTool, FileTool, MySQLTool, TxAdminTool, CustomPanelTool, DeployTool, ContextTool, collect_resource_files
+from .local import RepoMapTool, FileTool, MySQLTool, TxAdminTool, CustomPanelTool, DeployTool, ContextTool, SSHTool, collect_resource_files
 from .remote import RemoteClient
 
 # ─── Boot ─────────────────────────────────────────────────────────────────────
@@ -34,13 +34,76 @@ mysql   = MySQLTool(config)
 txadmin = CustomPanelTool(config) if config.admin_panel_type == "custom" else TxAdminTool(config)
 deploy  = DeployTool(config)
 context = ContextTool(config)
+ssh     = SSHTool(config)
 
-server = FastMCP("fiveclaw-agent")
+_OS_HINTS = {
+    "windows": (
+        "The user is on Windows. "
+        "Use Windows-style paths (e.g. C:\\\\fivem-server\\\\resources\\\\my-script). "
+        "Shell commands run in cmd/PowerShell — use `dir`, not `ls`. "
+        "MySQL may be in Program Files\\\\MariaDB or Program Files\\\\MySQL. "
+        "If tool_mysql_query fails with 'mysql not found', ask the user to set "
+        "MYSQL_BIN_DIR=C:/Program Files/MariaDB XX.X/bin in their MCP config. "
+        "If tool_syntax_check falls back to luaparser, ask the user to set "
+        "LUAC_PATH=C:/path/to/luac.exe in their MCP config for exact error positions."
+    ),
+    "linux": (
+        "The user is on Linux. "
+        "Use Unix paths (e.g. /home/user/fivem/resources/my-script). "
+        "Shell commands run in bash."
+    ),
+    "macos": (
+        "The user is on macOS. "
+        "Use Unix paths. Shell commands run in zsh/bash. "
+        "MySQL may be at /usr/local/bin/mysql (Homebrew)."
+    ),
+}
+
+_os_hint = _OS_HINTS.get(config.os.lower(), f"User OS: {config.os}") if config.os else (
+    "OS not set. Ask the user to add OS=windows or OS=linux to their MCP env config."
+)
+
+_INSTRUCTIONS = f"""You are the FiveClaw Agent — a local MCP server for FiveM server development.
+
+## Environment
+- Project root: {config.project_root}
+- Resources dir: {config.resources_dir}
+- Logs dir: {config.logs_dir}
+- SSH: {"configured" if config.has_ssh() else "not configured"}
+- MySQL: {"configured" if config.has_mysql() else "not configured"}
+- Admin panel: {config.admin_panel_type} at {config.txadmin_url}
+
+## OS
+{_os_hint}
+
+## Tool guidance
+- Local tools (repomap, SSH, MySQL, logs, txAdmin) run on the user's machine.
+- Cloud tools (scan_security, detect_anti_patterns, test_resource, etc.) relay to FiveClaw servers.
+- Use `repomap_generate` before any analysis tool if the resource map is stale.
+"""
+
+server = FastMCP("fiveclaw-agent", instructions=_INSTRUCTIONS)
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def _resource_files(resource: Optional[str] = None) -> dict:
-    """Collect local source files to send to the VPS for analysis."""
+    """Collect local source files to send to the VPS for analysis.
+
+    resource can be:
+      - a bare resource name ('character-select') — found in flat or category layout
+      - a category-relative path ('[local]/character-select')
+      - an absolute directory path
+    """
+    if resource:
+        from pathlib import Path as _P
+        p = _P(resource)
+        if p.is_absolute() and p.is_dir():
+            return collect_resource_files(p.parent, p.name)
+        # Relative path with separators (e.g. "[local]/character-select")
+        if p.parts and len(p.parts) > 1:
+            candidate = config.resources_dir / p
+            if candidate.is_dir():
+                return collect_resource_files(candidate.parent, candidate.name)
     return collect_resource_files(config.resources_dir, resource)
 
 def _manifest_files() -> dict:
@@ -126,6 +189,22 @@ def _per_resource_call(tool: str, base_params: dict, list_key: str, count_key: s
 # =============================================================================
 
 @server.tool()
+async def tool_platform_info() -> str:
+    """Return the configured OS and environment paths for this machine."""
+    return _json.dumps({
+        "os":               config.os or "not set — add OS=windows or OS=linux to MCP env",
+        "project_root":     str(config.project_root),
+        "resources_dir":    str(config.resources_dir),
+        "logs_dir":         str(config.logs_dir),
+        "ssh_configured":   config.has_ssh(),
+        "mysql_configured": config.has_mysql(),
+        "mysql_bin_dir":    config.mysql_bin_dir or "not set (auto-detect)",
+        "luac_path":        config.luac_path or "not set (auto-detect)",
+        "txadmin_url":      config.txadmin_url,
+        "admin_panel_type": config.admin_panel_type,
+    })
+
+@server.tool()
 async def repomap_generate() -> str:
     """Scan your FiveM resources directory and build a map of all resources,
     their files, exports, and event handlers. Run this first."""
@@ -187,7 +266,11 @@ async def tool_resource_control(action: str, resource_name: str) -> str:
 
 @server.tool()
 async def tool_server_console(command: str) -> str:
-    """Send a raw console command via txAdmin or custom panel."""
+    """Send a server console command.
+
+    txAdmin mode supports: start/stop/restart/ensure <resource>, refresh [resource], restart_server, stop_server.
+    Custom panel mode (ADMIN_PANEL_TYPE=custom) passes the command through as-is.
+    """
     return await txadmin.server_console(command)
 
 @server.tool()
@@ -206,6 +289,31 @@ async def deploy_resource(resource_name: str, target: str = "production") -> str
 async def backup_resource(resource_name: str) -> str:
     """Create a timestamped backup of a resource in your project's backups/ folder."""
     return await deploy.backup(resource_name)
+
+@server.tool()
+async def tool_ssh_run(command: str, timeout: int = 30) -> str:
+    """Run a shell command on the remote server via SSH. Returns stdout, stderr, and exit code."""
+    return await ssh.run_command(command, timeout)
+
+@server.tool()
+async def tool_ssh_ls(path: str = ".") -> str:
+    """List files and directories at a path on the remote server."""
+    return await ssh.list_dir(path)
+
+@server.tool()
+async def tool_ssh_read(path: str) -> str:
+    """Read a file from the remote server (up to 100 KB)."""
+    return await ssh.read_file(path)
+
+@server.tool()
+async def tool_ssh_write(path: str, content: str) -> str:
+    """Write content to a file on the remote server via SFTP."""
+    return await ssh.write_file(path, content)
+
+@server.tool()
+async def tool_ssh_stat(path: str) -> str:
+    """Get size, type, and last-modified time for a remote file or directory."""
+    return await ssh.stat(path)
 
 # Context memory
 @server.tool()
@@ -544,9 +652,16 @@ async def fivem_fetch_fivem_docs(page: str = "scripting-manual") -> str:
     return remote.call("fivem_fetch_fivem_docs", {"page": page})
 
 @server.tool()
-async def fivem_fetch_github_repo(repo_path: str, path: str = "", branch: str = "main") -> str:
-    """Fetch file contents from a GitHub repo (e.g. repo_path='esx-framework/es_extended', path='README.md')."""
-    return remote.call("fivem_fetch_github_repo", {"repo_path": repo_path, "path": path, "branch": branch})
+async def fivem_fetch_github_repo(repo_path: str = "", path: str = "", branch: str = "main",
+                                   search_query: str = "") -> str:
+    """Fetch files from a GitHub repo or search GitHub for FiveM resources.
+
+    Search mode: leave repo_path empty, set search_query (e.g. "esx inventory", "qbcore jobs language:lua").
+    Fetch mode: set repo_path ('owner/repo'), optionally path to a file or directory.
+    """
+    return remote.call("fivem_fetch_github_repo",
+                       {"repo_path": repo_path, "path": path, "branch": branch,
+                        "search_query": search_query})
 
 # ── fivem-mcp: guide ─────────────────────────────────────────────────────
 

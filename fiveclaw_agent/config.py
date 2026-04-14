@@ -1,8 +1,12 @@
 """Configuration for the FiveClaw Agent."""
 
+import hashlib
 import os
 import json
+import time
 from pathlib import Path
+
+_REMOTE_CONFIG_TTL = 3600  # 1 hour
 
 
 def load_env_file():
@@ -24,6 +28,9 @@ class Config:
 
         self.api_key = os.getenv("FIVECLAW_API_KEY", "")
         self.api_url = os.getenv("FIVECLAW_API_URL", "https://fiveclaw.xyz").rstrip("/")
+        self.os = os.getenv("OS", "").strip().lower()  # "windows", "linux", "macos"
+        self.mysql_bin_dir = os.getenv("MYSQL_BIN_DIR", "").strip()
+        self.luac_path = os.getenv("LUAC_PATH", "").strip()
 
         if not self.api_key:
             raise RuntimeError(
@@ -63,10 +70,11 @@ class Config:
 
         # SSH
         self.ssh = {
-            "host":     os.getenv("FIVEM_SSH_HOST", remote.get("host",       "")),
-            "port":     int(os.getenv("FIVEM_SSH_PORT", str(remote.get("port", 22)))),
-            "user":     os.getenv("FIVEM_SSH_USER", remote.get("sshUser",    "")),
-            "key_path": os.getenv("FIVEM_SSH_KEY",  remote.get("sshKeyPath", "")),
+            "host":       os.getenv("FIVEM_SSH_HOST",       remote.get("host",           "")),
+            "port":       int(os.getenv("FIVEM_SSH_PORT",   str(remote.get("port",       22)))),
+            "user":       os.getenv("FIVEM_SSH_USER",       remote.get("sshUser",        "")),
+            "key_path":   os.getenv("FIVEM_SSH_KEY",        remote.get("sshKeyPath",     "")),
+            "passphrase": os.getenv("FIVEM_SSH_PASSPHRASE", remote.get("sshPassphrase",  "")),
         }
 
         # MySQL
@@ -78,8 +86,10 @@ class Config:
             "database": os.getenv("MYSQL_DATABASE", remote.get("mysqlDatabase", "")),
         }
 
-        # txAdmin
-        self.txadmin_url  = os.getenv("TXADMIN_URL",  remote.get("txAdminUrl",  "") or "http://localhost:40120")
+        # txAdmin — TXADMIN_PORT is a convenience shorthand for changing just the port
+        _txadmin_port = os.getenv("TXADMIN_PORT", "")
+        _txadmin_default = f"http://localhost:{_txadmin_port}" if _txadmin_port else "http://localhost:40120"
+        self.txadmin_url  = os.getenv("TXADMIN_URL",  remote.get("txAdminUrl",  "") or _txadmin_default)
         self.txadmin_user = os.getenv("TXADMIN_USER", remote.get("txAdminUser", "") or "")
         self.txadmin_pass = os.getenv("TXADMIN_PASS", remote.get("txAdminPass", "") or "")
 
@@ -124,8 +134,35 @@ class Config:
             return self.extra_databases[name]
         return self.mysql
 
+    def _cache_path(self) -> Path:
+        key_hash = hashlib.md5(self.api_key.encode()).hexdigest()[:12]
+        return Path.home() / ".fiveclaw" / f"remote_config_{key_hash}.json"
+
+    def _load_cached_config(self) -> dict | None:
+        try:
+            p = self._cache_path()
+            if p.exists():
+                data = json.loads(p.read_text())
+                if time.time() - data.get("_ts", 0) < _REMOTE_CONFIG_TTL:
+                    return data.get("config", {})
+        except Exception:
+            pass
+        return None
+
+    def _save_cached_config(self, cfg: dict) -> None:
+        try:
+            p = self._cache_path()
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps({"config": cfg, "_ts": time.time()}))
+        except Exception:
+            pass
+
     def _fetch_remote_config(self) -> dict:
-        """Fetch server config from the FiveClaw dashboard API. Returns {} on failure."""
+        """Return server config from cache (instant) or network (on first run / stale cache)."""
+        cached = self._load_cached_config()
+        if cached is not None:
+            return cached
+
         import ssl, urllib.request, urllib.error
         if not self.api_url.startswith("https://"):
             raise ValueError(
@@ -142,8 +179,10 @@ class Config:
                     "User-Agent":    "FiveClaw-Agent/1.0",
                 },
             )
-            with urllib.request.urlopen(req, timeout=5, context=ctx) as r:
-                return json.loads(r.read().decode()) or {}
+            with urllib.request.urlopen(req, timeout=2, context=ctx) as r:
+                result = json.loads(r.read().decode()) or {}
+            self._save_cached_config(result)
+            return result
         except Exception:
             return {}
 

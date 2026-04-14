@@ -16,14 +16,10 @@
 <h3 align="center">The local AI bridge between your FiveM server and your IDE.</h3>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/tested%20on-Linux-brightgreen" alt="Tested on Linux" />
+  <img src="https://img.shields.io/badge/linux-supported-brightgreen" alt="Linux supported" />
   <img src="https://img.shields.io/badge/windows-supported-blue" alt="Windows supported" />
-</p>
-
-<p align="center">
-  <a href="https://pypi.org/project/fiveclaw-agent/"><img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python 3.10+" /></a>
-  <a href="https://github.com/fiveclaw/fiveclaw-agent/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT" /></a>
-
+  <img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python 3.10+" />
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT" />
 </p>
 
 <p align="center">
@@ -34,7 +30,7 @@
 
 ## What is this?
 
-`fiveclaw-agent` is a local [MCP](https://modelcontextprotocol.io) server that runs on your machine alongside your FiveM server. It gives your AI client (Claude, Cursor, Windsurf, etc.) direct access to your server's files, logs, MySQL database, and txAdmin — and connects it to the FiveClaw cloud platform for FiveM-specific AI intelligence.
+`fiveclaw-agent` is a local [MCP](https://modelcontextprotocol.io) server that runs on your machine alongside your FiveM server. It gives your AI client (Claude Code, Cursor, Windsurf, etc.) direct access to your server's files, logs, MySQL database, SSH, and txAdmin — and connects it to the FiveClaw cloud platform for FiveM-specific AI intelligence.
 
 **Install once. Works everywhere you code.**
 
@@ -44,12 +40,19 @@
 
 ```bash
 pip install fiveclaw-agent
-
-# With SSH deployment support
-pip install fiveclaw-agent[ssh]
 ```
 
 You'll need a [FiveClaw account](https://fiveclaw.xyz) and an API key from your [dashboard](https://fiveclaw.xyz/dashboard/keys).
+
+---
+
+## Configuration
+
+The easiest way to get your MCP config is the **interactive setup wizard** at:
+
+### 👉 [fiveclaw.xyz/dashboard/download](https://fiveclaw.xyz/dashboard/download)
+
+It generates the exact JSON for your AI client (Claude Code, Cursor, Windsurf, Kilo Code, Gemini CLI) based on your OS, server details, and plan — including Windows-specific settings, SSH, MySQL, txAdmin, and custom panel options.
 
 ---
 
@@ -67,10 +70,11 @@ You'll need a [FiveClaw account](https://fiveclaw.xyz) and an API key from your 
   │                             │
   │  ├─ 📁 Resource map + search│
   │  ├─ 🗃  MySQL queries        │
-  │  ├─ 🖥  txAdmin control      │
+  │  ├─ 🖥  Server control       │
   │  ├─ 📋 Log reader           │
-  │  ├─ 🚀 SSH deploy           │
-  │  └─ 🧠 Persistent memory   │
+  │  ├─ 🔑 SSH tools            │
+  │  ├─ 🚀 Deploy               │
+  │  └─ 🧠 Persistent memory    │
   └──────────┬──────────────────┘
              │  HTTPS · your API key
              ▼
@@ -88,20 +92,22 @@ Your credentials never leave your machine. The agent only forwards tool requests
 
 ## Local Tools
 
-These run entirely on your machine. No API key needed.
+These run entirely on your machine.
 
 | Tool | What it does |
 |------|-------------|
 | 📂 `repomap_generate` | Build a map of all resources in your server |
 | 🔍 `tool_search` | Search Lua/JS files across your resources |
-| ✅ `tool_syntax_check` | Check Lua syntax without running the server |
-| 📋 `read_latest_logs` | Tail FXServer, txAdmin, and resource logs |
+| ✅ `tool_syntax_check` | Check Lua syntax (embedded LuaJIT — no external binary needed) |
+| 📋 `read_latest_logs` | Tail FXServer and resource logs |
 | 🗃 `tool_mysql_query` | Run queries against your FiveM MySQL database |
 | 🖥 `tool_server_control` | Start, stop, restart the FXServer via txAdmin or custom panel |
-| 🔌 `tool_resource_control` | Start/stop/restart individual resources via txAdmin or custom panel |
-| 📡 `tool_server_console` | Send console commands via txAdmin or custom panel |
-| 🚀 `deploy_resource` | SSH-deploy a resource directly to production |
+| 🔌 `tool_resource_control` | Start/stop/restart individual resources |
+| 📡 `tool_server_console` | Send console commands |
+| 🔑 `tool_ssh_run/ls/read/write` | Full SSH access to your remote server |
+| 🚀 `deploy_resource` | Deploy a resource directly to production |
 | 🧠 `context_remember` | Store persistent notes across AI sessions |
+| ℹ️ `tool_platform_info` | Show configured OS, paths, and enabled services |
 
 ---
 
@@ -109,34 +115,26 @@ These run entirely on your machine. No API key needed.
 
 Powered by FiveClaw. Requires an API key from [fiveclaw.xyz](https://fiveclaw.xyz).
 
-### fivem-mcp — included on all plans (even free)
-
-> FiveM intelligence. 6,400+ native functions, framework docs, best practices, live CFX docs.
+### fivem-mcp — included on all plans
 
 | | |
 |---|---|
 | 📖 Native docs | Full reference for all 6,400+ FiveM/GTA natives with examples |
 | 🏗 Framework docs | ESX, QBCore, ox_lib, ox_core — guides, functions, patterns |
 | 💡 Best practices | Lua performance, sync patterns, common pitfalls |
-| 🔎 Anti-pattern guide | What not to do and why — with fixes |
 | ⚠️ Error solutions | Database of common FiveM errors with step-by-step fixes |
 | 🌐 Live CFX docs | Fetch live documentation directly from CFX |
 
 ### ai-fivem-dev-mcp — Pro + Enterprise
 
-> Deep code intelligence for your actual server resources.
-
 | | |
 |---|---|
 | 🏥 Resource health | Validate manifests, exports, load order |
 | 🛡 Security scanner | Detect injection, auth bypass, and logic vulnerabilities |
-| 🔗 Export contracts | Validate that imports match their exported signatures |
 | 🎯 Event tracer | Trace any event from trigger to handler across resources |
 | 🧪 Test engine | Unit tests, event tests, database tests, coverage reports |
 | 📐 Pattern library | Scaffold new resources from reusable team templates |
-| 🔍 Duplicate detector | Find copy-pasted code blocks across your codebase |
-| 📦 Dependency graph | Visualize resource dependencies (Enterprise) |
-| 👥 Team patterns | Shared scaffolds across your whole team (Enterprise) |
+| 🔍 Duplicate detector | Find copy-pasted code across your codebase |
 
 ---
 
@@ -150,130 +148,24 @@ Powered by FiveClaw. Requires an API key from [fiveclaw.xyz](https://fiveclaw.xy
 | **Kilo Code** | Project: `.kilocode/mcp.json` · Global: extension settings |
 | **Gemini CLI** | `~/.gemini/settings.json` — merge `mcpServers` key |
 
-The interactive setup wizard at [fiveclaw.xyz/dashboard/download](https://fiveclaw.xyz/dashboard/download) generates your config automatically.
-
----
-
-## Manual Config
-
-Add to your AI client's MCP config. Only `FIVECLAW_API_KEY` is required — remove any lines you don't use.
-
-> **Windows users:** Due to Python's pipe-buffering behaviour on Windows, use `python` as the command and pass `-u -m fiveclaw_agent` as args instead of calling the entry point directly:
-> ```json
-> {
->   "mcpServers": {
->     "fiveclaw": {
->       "command": "python",
->       "args": ["-u", "-m", "fiveclaw_agent"],
->       "env": { "FIVECLAW_API_KEY": "fc_live_YOUR_API_KEY_HERE", "TRANSPORT": "stdio" }
->     }
->   }
-> }
-> ```
-> The `-u` flag forces unbuffered I/O at the interpreter level, which is required for the MCP stdio transport to work correctly in a pipe.
-
-**Linux / macOS:**
-```json
-{
-  "mcpServers": {
-    "fiveclaw": {
-      "command": "fiveclaw",
-      "env": {
-        "FIVECLAW_API_KEY":    "fc_live_YOUR_API_KEY_HERE",
-        "FIVEM_PROJECT_ROOT":  "/path/to/your/fivem-server",
-        "FIVEM_RESOURCES_DIR": "/path/to/your/fivem-server/resources",
-
-        "TXADMIN_URL":         "http://localhost:40120",
-        "TXADMIN_USER":        "admin",
-        "TXADMIN_PASS":        "YOUR_TXADMIN_PASSWORD",
-
-        "MYSQL_HOST":          "127.0.0.1",
-        "MYSQL_USER":          "root",
-        "MYSQL_PASSWORD":      "YOUR_MYSQL_PASSWORD",
-        "MYSQL_DATABASE":      "fivem",
-        "MYSQL_DB2_HOST":     "127.0.0.1",
-        "MYSQL_DB2_USER":     "root",
-        "MYSQL_DB2_PASSWORD": "YOUR_PASSWORD",
-        "MYSQL_DB2_DATABASE": "your_second_db",
-
-        "FIVEM_SSH_HOST":      "YOUR_VPS_IP",
-        "FIVEM_SSH_USER":      "root",
-        "FIVEM_SSH_KEY":       "~/.ssh/id_rsa"
-      }
-    }
-  }
-}
-```
-
-### Custom Control Panel (alternative to txAdmin)
-
-If you run a custom admin panel instead of txAdmin, replace the `TXADMIN_*` fields with `ADMIN_PANEL_*`. All four endpoints must be set explicitly, and `FIVEM_LOGS_DIR` is required.
-
-```json
-{
-  "mcpServers": {
-    "fiveclaw": {
-      "command": "fiveclaw",
-      "env": {
-        "FIVECLAW_API_KEY":              "fc_live_YOUR_API_KEY_HERE",
-        "FIVEM_PROJECT_ROOT":            "/path/to/your/fivem-server",
-        "FIVEM_RESOURCES_DIR":           "/path/to/your/fivem-server/resources",
-
-        "ADMIN_PANEL_TYPE":              "custom",
-        "ADMIN_PANEL_URL":               "http://localhost:30121",
-        "ADMIN_PANEL_STATUS_ENDPOINT":   "/api/server/status",
-        "ADMIN_PANEL_START_ENDPOINT":    "/api/server-control/start",
-        "ADMIN_PANEL_STOP_ENDPOINT":     "/api/server-control/stop",
-        "ADMIN_PANEL_COMMAND_ENDPOINT":  "/api/server-control/command",
-        "FIVEM_LOGS_DIR":                "/path/to/logs",
-
-        "MYSQL_HOST":                    "127.0.0.1",
-        "MYSQL_USER":                    "root",
-        "MYSQL_PASSWORD":                "YOUR_MYSQL_PASSWORD",
-        "MYSQL_DATABASE":                "fivem",
-        "MYSQL_DB2_HOST":                 "127.0.0.1",
-        "MYSQL_DB2_USER":                 "root",
-        "MYSQL_DB2_PASSWORD":             "YOUR_PASSWORD",
-        "MYSQL_DB2_DATABASE":             "your_second_db",
-        "MYSQL_DB3_HOST":                 "127.0.0.1",
-        "MYSQL_DB3_USER":                 "root",
-        "MYSQL_DB3_PASSWORD":             "YOUR_PASSWORD",
-        "MYSQL_DB3_DATABASE":             "your_third_db",
-
-        "FIVEM_SSH_HOST":                "YOUR_VPS_IP",
-        "FIVEM_SSH_USER":                "root",
-        "FIVEM_SSH_KEY":                 "~/.ssh/id_rsa"
-      }
-    }
-  }
-}
-```
-
-> **Note:** `FIVEM_LOGS_DIR` is required when using `ADMIN_PANEL_TYPE=custom`. With txAdmin (the default), logs are auto-detected from `FIVEM_PROJECT_ROOT/logs`.
-
-Restart your AI client after saving.
-
-### Verify it's working
-
-Ask your AI: *"Run mcp_health to check my FiveClaw connection."*
-
 ---
 
 ## Platform Support
 
 | Environment | Status |
 |-------------|--------|
-| **Linux** (local agent + Linux FiveM server) | ✅ Fully tested |
-| **macOS** (local agent) | ✅ Should work — untested |
-| **Windows** (local agent or Windows FiveM server) | ✅ Supported — use `python -u -m fiveclaw_agent` (see Windows config above) |
+| **Linux** | ✅ Fully supported |
+| **macOS** | ✅ Fully supported |
+| **Windows** | ✅ Fully supported |
 
-> **Note:** Windows is supported. Use `python -u -m fiveclaw_agent` instead of the `fiveclaw` entry point — this bypasses Windows pipe-buffering issues with the `.exe` launcher. SSH deployment and MySQL on Windows should work; open an issue if you hit edge cases.
+**Windows note:** Use `python -u -m fiveclaw_agent` as the command (not the `fiveclaw` entry point) to avoid pipe-buffering issues. The setup wizard handles this automatically.
+
+---
 
 ## Requirements
 
 - Python 3.10+
-- A [FiveClaw account](https://fiveclaw.xyz) with an active subscription
-- API key from [fiveclaw.xyz/dashboard/keys](https://fiveclaw.xyz/dashboard/keys)
+- A [FiveClaw account](https://fiveclaw.xyz) with an API key
 
 ---
 
@@ -285,5 +177,5 @@ The `fiveclaw-agent` itself is open source. The cloud tools (fivem-mcp, ai-fivem
 ---
 
 <p align="center">
-  Built by <a href="https://fiveclaw.xyz">FiveClaw</a> · <a href="https://fiveclaw.xyz/pricing">Get started free</a>
+  Built by <a href="https://fiveclaw.xyz">FiveClaw</a> · <a href="https://fiveclaw.xyz/dashboard/download">Get the setup guide</a>
 </p>
