@@ -54,11 +54,14 @@ def collect_resource_files(resources_dir: Path, resource_name: Optional[str] = N
                         all_dirs.append(sub)
         dirs = all_dirs
 
+    _SKIP_DIRS = {"node_modules", ".git", "dist", "build", ".next", "__pycache__", "venv", ".venv"}
     for rdir in dirs:
         if not rdir.exists():
             continue
         for ext in ("*.lua", "*.js", "*.ts", "*.html", "*.css"):
             for f in rdir.rglob(ext):
+                if any(part in _SKIP_DIRS for part in f.parts):
+                    continue
                 try:
                     content = f.read_text(errors="ignore")
                     if len(content) > MAX_FILE:

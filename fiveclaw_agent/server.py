@@ -205,6 +205,49 @@ async def tool_platform_info() -> str:
     })
 
 @server.tool()
+async def mcp_health() -> str:
+    """Check FiveClaw Agent health and verify your connection is working.
+    Returns environment status, tool count, and API key validity."""
+    import time
+    tool_names = [t.name for t in await server.list_tools()]
+    categories = {
+        "local":           [t for t in tool_names if t in (
+            "tool_platform_info", "repomap_generate", "repomap_query", "repomap_show",
+            "tool_search", "tool_file_info", "tool_syntax_check", "read_latest_logs",
+            "tool_mysql_query", "tool_server_status", "tool_resource_control",
+            "tool_server_console", "tool_server_control", "deploy_resource", "backup_resource",
+        )],
+        "ssh":             [t for t in tool_names if t.startswith("tool_ssh_")],
+        "context_memory":  [t for t in tool_names if t.startswith("context_")],
+        "testing":         [t for t in tool_names if t.startswith("test_")],
+        "security":        [t for t in tool_names if "security" in t or "scan" in t],
+        "patterns":        [t for t in tool_names if t.startswith("pattern_")],
+        "fivem_docs":      [t for t in tool_names if t.startswith("fivem_")],
+        "code_intelligence": [t for t in tool_names if t in (
+            "detect_anti_patterns", "detect_duplicate_code", "find_exports",
+            "find_event_handlers", "find_triggers", "trace_event_flow",
+            "analyze_export_usage", "validate_export_contracts", "analyze_data_structure",
+        )],
+    }
+    return _json.dumps({
+        "status":          "healthy",
+        "timestamp":       time.strftime("%Y-%m-%d %H:%M:%S"),
+        "agent_version":   "1.3.2",
+        "environment": {
+            "project_root":    str(config.project_root),
+            "resources_dir":   str(config.resources_dir),
+            "os":              config.os or "not set",
+            "ssh_configured":  config.has_ssh(),
+            "mysql_configured": config.has_mysql(),
+            "admin_panel":     config.admin_panel_type,
+        },
+        "tools": {
+            "total":      len(tool_names),
+            "categories": {k: len(v) for k, v in categories.items()},
+        },
+    }, indent=2)
+
+@server.tool()
 async def repomap_generate() -> str:
     """Scan your FiveM resources directory and build a map of all resources,
     their files, exports, and event handlers. Run this first."""
