@@ -125,16 +125,27 @@ Powered by FiveClaw. Requires an API key from [fiveclaw.xyz](https://fiveclaw.xy
 | ⚠️ Error solutions | Database of common FiveM errors with step-by-step fixes |
 | 🌐 Live CFX docs | Fetch live documentation directly from CFX |
 
-### ai-fivem-dev-mcp — Pro + Enterprise
+### ai-fivem-dev-mcp — Pro
 
 | | |
 |---|---|
 | 🏥 Resource health | Validate manifests, exports, load order |
 | 🛡 Security scanner | Detect injection, auth bypass, and logic vulnerabilities |
 | 🎯 Event tracer | Trace any event from trigger to handler across resources |
-| 🧪 Test engine | Unit tests, event tests, database tests, coverage reports |
 | 📐 Pattern library | Scaffold new resources from reusable team templates |
 | 🔍 Duplicate detector | Find copy-pasted code across your codebase |
+| 📋 Load order validator | Catch server.cfg load order mistakes before they crash your server |
+| 🗺 Dependency graph | Map every resource dependency across your entire server |
+
+### ai-fivem-dev-mcp — Enterprise
+
+| | |
+|---|---|
+| 🧪 Test engine | Run full test suites (`test_resource`, `test_database`) |
+| 🎯 Event testing | Simulate and assert on live network events (`test_event`) |
+| 🔬 Function testing | Unit-test any Lua or JS function in isolation (`test_function`) |
+| 📊 Coverage reports | See exactly which functions and events are tested (`test_coverage`) |
+| ⚙️ Test generation | Auto-generate test stubs from your existing code (`test_generate`) |
 
 ---
 
