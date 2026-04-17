@@ -146,6 +146,7 @@ Powered by FiveClaw. Requires an API key from [fiveclaw.xyz](https://fiveclaw.xy
 | 🔬 Function testing | Unit-test any Lua or JS function in isolation (`test_function`) |
 | 📊 Coverage reports | See exactly which functions and events are tested (`test_coverage`) |
 | ⚙️ Test generation | Auto-generate test stubs from your existing code (`test_generate`) |
+| 🧠 Shared team context | Team knowledge base stored on FiveClaw infrastructure — all members read and write |
 
 ---
 
