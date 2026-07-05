@@ -271,6 +271,44 @@ class MySQLTool:
     def __init__(self, config: Config):
         self.config = config
 
+    def _resolve_mysql_bin(self) -> tuple[Optional[str], Optional[str]]:
+        """Locate the mysql client binary. Returns (path, error_json_str)."""
+        # Explicit MYSQL_BIN_DIR takes priority — avoids Windows PATH inheritance issues
+        if self.config.mysql_bin_dir:
+            import sys as _sys
+            _exe = "mysql.exe" if _sys.platform == "win32" else "mysql"
+            return str(Path(self.config.mysql_bin_dir) / _exe), None
+
+        mysql_bin = shutil.which("mysql")
+        if mysql_bin is None:
+            import sys as _sys
+            if _sys.platform == "win32":
+                import glob as _glob
+                for _pattern in [
+                    r"C:\Program Files\MariaDB*\bin\mysql.exe",
+                    r"C:\Program Files\MySQL\MySQL Server*\bin\mysql.exe",
+                    r"C:\Program Files (x86)\MariaDB*\bin\mysql.exe",
+                    r"C:\Program Files (x86)\MySQL\MySQL Server*\bin\mysql.exe",
+                ]:
+                    _found = _glob.glob(_pattern)
+                    if _found:
+                        mysql_bin = _found[0]
+                        break
+        if mysql_bin is None:
+            return None, json.dumps({"error": "mysql client not found. Set MYSQL_BIN_DIR to your MariaDB/MySQL bin directory (e.g. C:/Program Files/MariaDB 12.2/bin)."})
+        return mysql_bin, None
+
+    def _run_sql(self, mysql_bin: str, db: dict, sql: str) -> subprocess.CompletedProcess:
+        cmd = [
+            mysql_bin,
+            "-h", db.get("host", "127.0.0.1"),
+            "-P", str(db.get("port", 3306)),
+            "-u", db["user"],
+            f"-p{db['password']}",
+            "-N", "-e", sql, db["database"],
+        ]
+        return subprocess.run(cmd, capture_output=True, text=True)
+
     async def query(self, query: str, db_name: str = "default") -> str:
         if not self.config.has_mysql(db_name):
             available = ["default"] + list(self.config.extra_databases.keys())
@@ -280,45 +318,137 @@ class MySQLTool:
                 "setup": "Set MYSQL_USER/MYSQL_PASSWORD/MYSQL_DATABASE for default, or MYSQL_EXTRA_DBS for named databases.",
             })
 
-        # Explicit MYSQL_BIN_DIR takes priority — avoids Windows PATH inheritance issues
-        if self.config.mysql_bin_dir:
-            import sys as _sys
-            _exe = "mysql.exe" if _sys.platform == "win32" else "mysql"
-            mysql_bin = str(Path(self.config.mysql_bin_dir) / _exe)
-        else:
-            mysql_bin = shutil.which("mysql")
-            if mysql_bin is None:
-                import sys as _sys
-                if _sys.platform == "win32":
-                    import glob as _glob
-                    for _pattern in [
-                        r"C:\Program Files\MariaDB*\bin\mysql.exe",
-                        r"C:\Program Files\MySQL\MySQL Server*\bin\mysql.exe",
-                        r"C:\Program Files (x86)\MariaDB*\bin\mysql.exe",
-                        r"C:\Program Files (x86)\MySQL\MySQL Server*\bin\mysql.exe",
-                    ]:
-                        _found = _glob.glob(_pattern)
-                        if _found:
-                            mysql_bin = _found[0]
-                            break
-            if mysql_bin is None:
-                return json.dumps({"error": "mysql client not found. Set MYSQL_BIN_DIR to your MariaDB/MySQL bin directory (e.g. C:/Program Files/MariaDB 12.2/bin)."})
+        mysql_bin, err = self._resolve_mysql_bin()
+        if err is not None:
+            return err
 
         db = self.config.get_db(db_name)
-        cmd = [
-            mysql_bin,
-            "-h", db.get("host", "127.0.0.1"),
-            "-P", str(db.get("port", 3306)),
-            "-u", db["user"],
-            f"-p{db['password']}",
-            "-N", "-e", query, db["database"],
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = self._run_sql(mysql_bin, db, query)
         if result.returncode != 0:
             return json.dumps({"error": result.stderr.strip()})
 
         rows = [line.split("\t") for line in result.stdout.strip().splitlines() if line]
-        return json.dumps({"success": True, "rows": rows, "count": len(rows), "database": db["database"]})
+        return json.dumps({
+            "success": True,
+            "rows": rows,
+            "count": len(rows),
+            "db_name": db_name,
+            "database": db["database"],
+        })
+
+    async def list_databases(self) -> str:
+        """List every configured MySQL connection (default + extra databases) with
+        its alias, real database, host:port, and table list (via SHOW TABLES)."""
+        mysql_bin, err = self._resolve_mysql_bin()
+        if err is not None:
+            return err
+
+        # Build the alias → connection map: 'default' plus every extra database.
+        connections = [("default", self.config.mysql)]
+        for alias, db in self.config.extra_databases.items():
+            connections.append((alias, db))
+
+        databases = []
+        for alias, db in connections:
+            entry = {
+                "alias":    alias,
+                "database": db.get("database", ""),
+                "host":     f"{db.get('host', '127.0.0.1')}:{db.get('port', 3306)}",
+            }
+            if not (db.get("user") and db.get("database")):
+                entry["error"] = "not configured (missing user or database)"
+                databases.append(entry)
+                continue
+            try:
+                result = self._run_sql(mysql_bin, db, "SHOW TABLES")
+                if result.returncode != 0:
+                    entry["error"] = result.stderr.strip()
+                else:
+                    entry["tables"] = [
+                        line.strip()
+                        for line in result.stdout.strip().splitlines()
+                        if line.strip()
+                    ]
+                    entry["table_count"] = len(entry["tables"])
+            except Exception as e:
+                entry["error"] = str(e)
+            databases.append(entry)
+
+        return json.dumps({
+            "success": True,
+            "count": len(databases),
+            "databases": databases,
+        }, indent=2)
+
+    async def visualize_schema(self, db_name: str = "default") -> str:
+        """Render an ASCII schema diagram (tables, columns, foreign keys) for a
+        configured database. Runs locally against your MySQL — the schema and data
+        never leave the machine. db_name accepts an alias or a real database name."""
+        if not self.config.has_mysql(db_name):
+            available = ["default"] + list(self.config.extra_databases.keys())
+            return json.dumps({
+                "error": f"MySQL database '{db_name}' not configured.",
+                "available": available,
+            })
+
+        mysql_bin, err = self._resolve_mysql_bin()
+        if err is not None:
+            return err
+
+        db = self.config.get_db(db_name)
+
+        tbl = self._run_sql(mysql_bin, db, "SHOW TABLES")
+        if tbl.returncode != 0:
+            return json.dumps({"error": tbl.stderr.strip()})
+        table_names = [l.strip() for l in tbl.stdout.strip().splitlines() if l.strip()]
+
+        tables = []
+        for name in table_names:
+            cols = self._run_sql(mysql_bin, db, f"DESCRIBE `{name}`")
+            columns = []
+            if cols.returncode == 0:
+                for row in cols.stdout.strip().splitlines():
+                    c = row.split("\t")
+                    if len(c) >= 4:
+                        columns.append({"name": c[0], "type": c[1], "null": c[2], "key": c[3]})
+            fks = self._run_sql(
+                mysql_bin, db,
+                "SELECT COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME "
+                "FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE "
+                f"WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{name}' "
+                "AND REFERENCED_TABLE_NAME IS NOT NULL",
+            )
+            foreign_keys = []
+            if fks.returncode == 0:
+                for row in fks.stdout.strip().splitlines():
+                    f = row.split("\t")
+                    if len(f) >= 3:
+                        foreign_keys.append({"column": f[0], "references_table": f[1], "references_column": f[2]})
+            tables.append({"name": name, "columns": columns, "foreign_keys": foreign_keys})
+
+        lines = [f"Database: {db['database']}", "=" * 60, ""]
+        for t in tables:
+            lines.append(f"┌─ {t['name']}")
+            for col in t["columns"]:
+                key_marker = "🔑 " if col["key"] == "PRI" else "   "
+                null_marker = "NULL" if col["null"] == "YES" else "NOT NULL"
+                lines.append(f"│  {key_marker}{col['name']}: {col['type']} {null_marker}")
+            if t["foreign_keys"]:
+                lines.append("│")
+                lines.append("│  Foreign Keys:")
+                for fk in t["foreign_keys"]:
+                    lines.append(f"│    {fk['column']} → {fk['references_table']}.{fk['references_column']}")
+            lines.append("└─" + "─" * 40)
+            lines.append("")
+
+        return json.dumps({
+            "success": True,
+            "db_name": db_name,
+            "database": db["database"],
+            "table_count": len(tables),
+            "ascii_diagram": "\n".join(lines),
+            "tables": tables,
+        }, indent=2)
 
 
 # ─── txAdmin ──────────────────────────────────────────────────────────────────

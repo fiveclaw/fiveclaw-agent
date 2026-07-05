@@ -125,14 +125,31 @@ class Config:
 
     def has_mysql(self, name: str = "default") -> bool:
         if name != "default" and name not in self.extra_databases:
-            return False
+            if self._resolve_by_database(name) is None:
+                return False
         db = self.get_db(name)
         return bool(db.get("user") and db.get("database"))
 
     def get_db(self, name: str = "default") -> dict:
         if name != "default" and name in self.extra_databases:
             return self.extra_databases[name]
+        if name != "default":
+            # Fall back to matching the real database name (case-insensitive)
+            resolved = self._resolve_by_database(name)
+            if resolved is not None:
+                return resolved
         return self.mysql
+
+    def _resolve_by_database(self, name: str) -> dict | None:
+        """Resolve a connection by matching `name` (case-insensitive) against the
+        real `database` value of the default connection or any extra database."""
+        target = name.lower()
+        if (self.mysql.get("database") or "").lower() == target:
+            return self.mysql
+        for db in self.extra_databases.values():
+            if (db.get("database") or "").lower() == target:
+                return db
+        return None
 
     def _cache_path(self) -> Path:
         key_hash = hashlib.md5(self.api_key.encode()).hexdigest()[:12]

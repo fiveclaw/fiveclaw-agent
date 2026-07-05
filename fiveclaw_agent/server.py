@@ -214,7 +214,7 @@ async def mcp_health() -> str:
         "local":           [t for t in tool_names if t in (
             "tool_platform_info", "repomap_generate", "repomap_query", "repomap_show",
             "tool_search", "tool_file_info", "tool_syntax_check", "read_latest_logs",
-            "tool_mysql_query", "tool_server_status", "tool_resource_control",
+            "tool_mysql_query", "mysql_list_databases", "tool_server_status", "tool_resource_control",
             "tool_server_console", "tool_server_control", "deploy_resource", "backup_resource",
         )],
         "ssh":             [t for t in tool_names if t.startswith("tool_ssh_")],
@@ -232,7 +232,7 @@ async def mcp_health() -> str:
     return _json.dumps({
         "status":          "healthy",
         "timestamp":       time.strftime("%Y-%m-%d %H:%M:%S"),
-        "agent_version":   "1.3.2",
+        "agent_version":   "1.3.4",
         "environment": {
             "project_root":    str(config.project_root),
             "resources_dir":   str(config.resources_dir),
@@ -293,9 +293,17 @@ async def read_latest_logs(lines: int = 100, pattern: Optional[str] = None) -> s
 async def tool_mysql_query(query: str, db_name: str = "default") -> str:
     """Execute a SQL query against a configured MySQL database.
 
-    db_name: 'default' or a named database from MYSQL_EXTRA_DBS (e.g. 'qbcore', 'trucking', 'hz').
+    db_name: 'default', a configured alias, or a real database name. Call mysql_list_databases to see all configured databases.
     """
     return await mysql.query(query, db_name)
+
+@server.tool()
+async def mysql_list_databases() -> str:
+    """List every configured MySQL connection — alias, real database, host:port, and table list.
+
+    Gives a one-shot topology view of all databases this agent can reach (default + extras).
+    """
+    return await mysql.list_databases()
 
 @server.tool()
 async def tool_server_status() -> str:
@@ -516,9 +524,13 @@ async def analyze_export_usage(caller: str, target: str, export_name: Optional[s
                        files=merged)
 
 @server.tool()
-async def mysql_visualize_schema() -> str:
-    """Visualize your database schema as an ASCII diagram."""
-    return remote.call("mysql_visualize_schema", {})
+async def mysql_visualize_schema(db_name: str = "default") -> str:
+    """Visualize a database's schema as an ASCII diagram (tables, columns, foreign keys).
+
+    Runs locally against your MySQL — the schema and data never leave your machine.
+    db_name: 'default', a configured alias, or a real database name (see mysql_list_databases).
+    """
+    return await mysql.visualize_schema(db_name)
 
 @server.tool()
 async def pattern_list() -> str:
