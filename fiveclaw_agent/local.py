@@ -601,29 +601,37 @@ class TxAdminTool:
         if verb == "refresh" and not arg:
             return self._post("/fxserver/commands", {"action": "refresh_res", "parameter": ""})
 
-        # Arbitrary command. txAdmin v8's HTTP API can't run these, but its live console
-        # CAN over socket.io — the product-correct path: it reuses the admin session
-        # already configured and needs no server-side config or new attack surface. Fall
-        # back to RCON (if configured) only when socket.io is unavailable or fails.
-        sock = self._txadmin_socket_command(command)
-        if sock is not None:
-            return sock
-        return self._rcon_command(command)
+        # Arbitrary command → txAdmin's live console over socket.io. This is the ONLY
+        # channel txAdmin v8 accepts raw commands on, and it's the product-correct path:
+        # it reuses the admin session the customer already configured, needs no server-side
+        # config, and adds no new attack surface. There is NO RCON fallback — for non-txAdmin
+        # setups the custom panel path (CustomPanelTool) has its own command endpoint.
+        return self._txadmin_socket_command(command)
 
-    def _txadmin_socket_command(self, command: str):
+    def _txadmin_socket_command(self, command: str, _retry: bool = True) -> str:
         """Run an arbitrary console command via txAdmin's live-console socket.io room —
-        the only channel txAdmin v8 accepts raw commands on. Auth is the existing session
-        cookie; joins the `liveconsole` room and emits `consoleCommand`, then returns the
-        console output streamed back over `consoleData`. Returns a JSON string on success,
-        or None to signal 'fall through to RCON' (socket.io missing / no session / failed)."""
+        the only channel txAdmin v8 accepts raw commands on. Reuses the cached admin session
+        cookie (re-auths only when it's missing or has expired, so we don't hammer txAdmin's
+        rate-limited /auth/password on every call). Joins the `liveconsole` room, emits
+        `consoleCommand`, and returns the output streamed back over `consoleData`. Always
+        returns a JSON string (success or a helpful error)."""
         try:
             import socketio
         except ImportError:
-            return None
+            return json.dumps({
+                "error": "socketio_missing",
+                "hint": "python-socketio[client] is required for txAdmin console commands — reinstall fiveclaw-agent.",
+                "command": command,
+            })
         if not self._cookie:
             self._authenticate()
         if not self._cookie:
-            return None
+            return json.dumps({
+                "error": "txadmin_not_configured",
+                "hint": ("Set TXADMIN_URL / TXADMIN_USER / TXADMIN_PASS to run console commands over "
+                         "txAdmin, or use a custom panel (ADMIN_PANEL_TYPE=custom with a command endpoint)."),
+                "command": command,
+            })
         import re
         sio = socketio.Client(reconnection=False)
         out = []
@@ -634,20 +642,31 @@ class TxAdminTool:
 
         try:
             # let engine.io negotiate transports (websocket-only forced = connect error);
-            # request the liveconsole room via query; auth via the session cookie header.
+            # request the liveconsole room via query; auth via the cached session cookie.
             sio.connect(self.config.txadmin_url + "?rooms=liveconsole",
                         headers={"Cookie": self._cookie}, wait_timeout=10)
-        except Exception:
+        except Exception as e:
             try:
                 sio.disconnect()
             except Exception:
                 pass
-            return None  # fall through to RCON
+            # The cached session may have expired — re-auth once and retry with a fresh cookie.
+            if _retry:
+                self._cookie = ""
+                self._authenticate()
+                if self._cookie:
+                    return self._txadmin_socket_command(command, _retry=False)
+            return json.dumps({
+                "error": "txadmin_console_unreachable",
+                "hint": (f"Couldn't open the txAdmin live console at {self.config.txadmin_url} ({e}). "
+                         "Is txAdmin running and the admin account valid?"),
+                "command": command,
+            })
         try:
             sio.emit("consoleCommand", command)
             sio.sleep(1.5)  # collect the console output this command produces
-        except Exception:
-            return None
+        except Exception as e:
+            return json.dumps({"error": f"txadmin_console_emit_failed: {e}", "command": command})
         finally:
             try:
                 sio.disconnect()
@@ -655,55 +674,17 @@ class TxAdminTool:
                 pass
         clean = re.sub(r"\x1b\[[0-9;]*m", "", "".join(out))  # strip ANSI colour
         tail = "\n".join(l.rstrip() for l in clean.splitlines() if l.strip())[-2000:]
-        return json.dumps({"ok": True, "command": command, "channel": "txadmin-socketio", "output": tail})
-
-    def _rcon_command(self, command: str) -> str:
-        """Run a raw console command via FiveM RCON (connectionless OOB UDP to the game
-        port). Requires rcon_password in server.cfg + RCON_PASSWORD/RCON_PORT in the
-        agent env. Reads any multi-datagram output until the server goes quiet."""
-        import socket
-        pw = self.config.rcon_password
-        if not pw:
-            return json.dumps({
-                "error": "rcon_not_configured",
-                "hint": (
-                    "This command isn't one of txAdmin's structured actions, so it needs RCON. "
-                    "Set rcon_password in server.cfg and RCON_PASSWORD (+ RCON_PORT = your game "
-                    "endpoint port) in the agent env, then retry."
-                ),
-                "command": command,
-            })
-        host, port = self.config.rcon_host, self.config.rcon_port
-        payload = b"\xff\xff\xff\xffrcon " + pw.encode() + b" " + command.encode()
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.settimeout(4.0)
-        chunks = []
-        try:
-            s.sendto(payload, (host, port))
-            while True:  # RCON output can span several datagrams
-                try:
-                    data, _ = s.recvfrom(65536)
-                except socket.timeout:
-                    break
-                if data[:4] == b"\xff\xff\xff\xff":
-                    data = data[4:]
-                    if data.startswith(b"print\n"):
-                        data = data[6:]
-                    elif data.startswith(b"print"):
-                        data = data[5:]
-                chunks.append(data.decode("utf-8", "replace"))
-                s.settimeout(0.4)  # brief wait for any follow-up packets
-        except Exception as e:
-            return json.dumps({"error": f"rcon_failed: {e}", "command": command,
-                               "hint": f"Is the game server reachable at {host}:{port} (RCON on the endpoint UDP port)?"})
-        finally:
-            s.close()
-        out = "".join(chunks).strip()
-        if not chunks:
-            return json.dumps({"ok": False, "error": "no_rcon_response", "command": command,
-                               "hint": "No reply — check RCON_PORT matches the game endpoint port and rcon_password matches server.cfg."})
-        ok = "Invalid password" not in out
-        return json.dumps({"ok": ok, "command": command, "output": out})
+        # An expired/invalid session still CONNECTS at the transport layer, but the
+        # liveconsole room silently rejects it → zero consoleData. A valid session always
+        # echoes at least the command back, so treat empty output as a dead session and
+        # re-auth + retry once. (Connect-time exceptions are handled above; this catches
+        # the silent-reject case they miss.)
+        if not tail and _retry:
+            self._cookie = ""
+            self._authenticate()
+            if self._cookie:
+                return self._txadmin_socket_command(command, _retry=False)
+        return json.dumps({"ok": bool(tail), "command": command, "channel": "txadmin-socketio", "output": tail})
 
     async def server_control(self, action: str) -> str:
         """POST /fxserver/controls — restart/start/stop the whole server."""

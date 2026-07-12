@@ -232,7 +232,7 @@ async def mcp_health() -> str:
     return _json.dumps({
         "status":          "healthy",
         "timestamp":       time.strftime("%Y-%m-%d %H:%M:%S"),
-        "agent_version":   "1.3.5",
+        "agent_version":   "1.3.6",
         "environment": {
             "project_root":    str(config.project_root),
             "resources_dir":   str(config.resources_dir),
