@@ -601,16 +601,109 @@ class TxAdminTool:
         if verb == "refresh" and not arg:
             return self._post("/fxserver/commands", {"action": "refresh_res", "parameter": ""})
 
-        return json.dumps({
-            "error": "unsupported_command",
-            "hint": (
-                "txAdmin v8 HTTP API supports structured commands only: "
-                "start/stop/restart/ensure <resource>, refresh [resource], restart_server, stop_server. "
-                "For arbitrary console commands, switch to a custom panel (ADMIN_PANEL_TYPE=custom) "
-                "with an ADMIN_PANEL_COMMAND_ENDPOINT that forwards raw input."
-            ),
-            "command": command,
-        })
+        # Arbitrary command. txAdmin v8's HTTP API can't run these, but its live console
+        # CAN over socket.io — the product-correct path: it reuses the admin session
+        # already configured and needs no server-side config or new attack surface. Fall
+        # back to RCON (if configured) only when socket.io is unavailable or fails.
+        sock = self._txadmin_socket_command(command)
+        if sock is not None:
+            return sock
+        return self._rcon_command(command)
+
+    def _txadmin_socket_command(self, command: str):
+        """Run an arbitrary console command via txAdmin's live-console socket.io room —
+        the only channel txAdmin v8 accepts raw commands on. Auth is the existing session
+        cookie; joins the `liveconsole` room and emits `consoleCommand`, then returns the
+        console output streamed back over `consoleData`. Returns a JSON string on success,
+        or None to signal 'fall through to RCON' (socket.io missing / no session / failed)."""
+        try:
+            import socketio
+        except ImportError:
+            return None
+        if not self._cookie:
+            self._authenticate()
+        if not self._cookie:
+            return None
+        import re
+        sio = socketio.Client(reconnection=False)
+        out = []
+
+        @sio.on("consoleData")
+        def _on(data):
+            out.append(data if isinstance(data, str) else str(data))
+
+        try:
+            # let engine.io negotiate transports (websocket-only forced = connect error);
+            # request the liveconsole room via query; auth via the session cookie header.
+            sio.connect(self.config.txadmin_url + "?rooms=liveconsole",
+                        headers={"Cookie": self._cookie}, wait_timeout=10)
+        except Exception:
+            try:
+                sio.disconnect()
+            except Exception:
+                pass
+            return None  # fall through to RCON
+        try:
+            sio.emit("consoleCommand", command)
+            sio.sleep(1.5)  # collect the console output this command produces
+        except Exception:
+            return None
+        finally:
+            try:
+                sio.disconnect()
+            except Exception:
+                pass
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", "".join(out))  # strip ANSI colour
+        tail = "\n".join(l.rstrip() for l in clean.splitlines() if l.strip())[-2000:]
+        return json.dumps({"ok": True, "command": command, "channel": "txadmin-socketio", "output": tail})
+
+    def _rcon_command(self, command: str) -> str:
+        """Run a raw console command via FiveM RCON (connectionless OOB UDP to the game
+        port). Requires rcon_password in server.cfg + RCON_PASSWORD/RCON_PORT in the
+        agent env. Reads any multi-datagram output until the server goes quiet."""
+        import socket
+        pw = self.config.rcon_password
+        if not pw:
+            return json.dumps({
+                "error": "rcon_not_configured",
+                "hint": (
+                    "This command isn't one of txAdmin's structured actions, so it needs RCON. "
+                    "Set rcon_password in server.cfg and RCON_PASSWORD (+ RCON_PORT = your game "
+                    "endpoint port) in the agent env, then retry."
+                ),
+                "command": command,
+            })
+        host, port = self.config.rcon_host, self.config.rcon_port
+        payload = b"\xff\xff\xff\xffrcon " + pw.encode() + b" " + command.encode()
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(4.0)
+        chunks = []
+        try:
+            s.sendto(payload, (host, port))
+            while True:  # RCON output can span several datagrams
+                try:
+                    data, _ = s.recvfrom(65536)
+                except socket.timeout:
+                    break
+                if data[:4] == b"\xff\xff\xff\xff":
+                    data = data[4:]
+                    if data.startswith(b"print\n"):
+                        data = data[6:]
+                    elif data.startswith(b"print"):
+                        data = data[5:]
+                chunks.append(data.decode("utf-8", "replace"))
+                s.settimeout(0.4)  # brief wait for any follow-up packets
+        except Exception as e:
+            return json.dumps({"error": f"rcon_failed: {e}", "command": command,
+                               "hint": f"Is the game server reachable at {host}:{port} (RCON on the endpoint UDP port)?"})
+        finally:
+            s.close()
+        out = "".join(chunks).strip()
+        if not chunks:
+            return json.dumps({"ok": False, "error": "no_rcon_response", "command": command,
+                               "hint": "No reply — check RCON_PORT matches the game endpoint port and rcon_password matches server.cfg."})
+        ok = "Invalid password" not in out
+        return json.dumps({"ok": ok, "command": command, "output": out})
 
     async def server_control(self, action: str) -> str:
         """POST /fxserver/controls — restart/start/stop the whole server."""

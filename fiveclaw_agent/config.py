@@ -93,6 +93,14 @@ class Config:
         self.txadmin_user = os.getenv("TXADMIN_USER", remote.get("txAdminUser", "") or "")
         self.txadmin_pass = os.getenv("TXADMIN_PASS", remote.get("txAdminPass", "") or "")
 
+        # RCON — raw console channel. txAdmin v8's HTTP API only accepts structured
+        # commands (start/stop/refresh), so arbitrary console commands go over FiveM's
+        # RCON (OOB UDP on the game port). Host defaults to loopback (the game server is
+        # local); port defaults to FiveM's 30120 — set RCON_PORT to your endpoint port.
+        self.rcon_password = os.getenv("RCON_PASSWORD", remote.get("rconPassword", "") or "")
+        self.rcon_host     = os.getenv("RCON_HOST", remote.get("rconHost", "") or "127.0.0.1")
+        self.rcon_port     = int(os.getenv("RCON_PORT", str(remote.get("rconPort", 30120))))
+
         # Admin panel (txadmin | custom)
         self.admin_panel_type = os.getenv("ADMIN_PANEL_TYPE", remote.get("adminPanelType", "txadmin"))
         self.custom_panel_url = os.getenv("ADMIN_PANEL_URL",  remote.get("adminPanelUrl",  ""))
