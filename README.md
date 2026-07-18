@@ -30,7 +30,9 @@
 
 ## What is this?
 
-`fiveclaw-agent` is a local [MCP](https://modelcontextprotocol.io) server that runs on your machine alongside your FiveM server. It gives your AI client (Claude Code, Cursor, Windsurf, etc.) direct access to your server's files, logs, MySQL database, SSH, and txAdmin — and connects it to the FiveClaw cloud platform for FiveM-specific AI intelligence.
+`fiveclaw-agent` is a local [MCP](https://modelcontextprotocol.io) server that runs on your machine alongside your FiveM server. It gives your AI client (Claude Code, Cursor, Windsurf, etc.) direct access to your server's files, logs, MySQL database, SSH, and txAdmin — plus a full **local** toolkit for FiveM analysis: security scanning, resource validation, anti-pattern and duplicate detection, event tracing, dependency graphs, and more.
+
+**Everything runs on your machine. No API key required to get started.** An optional free FiveClaw account adds the cloud docs library — 6,400+ FiveM/GTA natives and framework references (ESX, QBCore, ox).
 
 **Install once. Works everywhere you code.**
 
@@ -42,7 +44,7 @@
 pip install fiveclaw-agent
 ```
 
-You'll need a [FiveClaw account](https://fiveclaw.xyz) and an API key from your [dashboard](https://fiveclaw.xyz/dashboard/keys).
+That's it — every analysis and server tool runs locally with no account. Want native/framework docs too? Grab a free [API key](https://fiveclaw.xyz/dashboard/keys) and add it to your config.
 
 ---
 
@@ -66,87 +68,71 @@ It generates the exact JSON for your AI client (Claude Code, Cursor, Windsurf, K
              │  stdio / MCP protocol
              ▼
   ┌─────────────────────────────┐
-  │      fiveclaw-agent         │  ← runs locally on your machine
+  │      fiveclaw-agent         │  ← runs locally · no key needed
   │                             │
+  │  ├─ 🛡  Security & analysis  │  scan · validate · trace · deps
   │  ├─ 📁 Resource map + search│
   │  ├─ 🗃  MySQL queries        │
   │  ├─ 🖥  Server control       │
   │  ├─ 📋 Log reader           │
-  │  ├─ 🔑 SSH tools            │
-  │  ├─ 🚀 Deploy               │
+  │  ├─ 🔑 SSH + deploy         │
   │  └─ 🧠 Persistent memory    │
   └──────────┬──────────────────┘
-             │  HTTPS · your API key
+             │  HTTPS · free API key (docs only)
              ▼
   ┌─────────────────────────────┐
-  │   FiveClaw Platform         │
-  │                             │
-  │  ├─ fivem-mcp  (all plans)  │  6,400+ natives · ESX · QBCore · ox
-  │  └─ ai-fivem-dev-mcp (Pro+) │  analysis · security · testing
+  │   FiveClaw Docs             │  6,400+ natives · ESX · QBCore · ox
+  │   (free with an account)    │  framework refs · best practices
   └─────────────────────────────┘
 ```
 
-Your credentials never leave your machine. The agent only forwards tool requests to FiveClaw — it never uploads your code or files.
+Your credentials and code never leave your machine — the analysis runs locally. Only native/framework doc lookups reach FiveClaw, and those never include your code.
 
 ---
 
-## Local Tools
+## Tools
 
-These run entirely on your machine.
+Everything below runs **locally on your machine, no API key needed**, except the FiveClaw Docs section at the end.
+
+### Analysis (local)
 
 | Tool | What it does |
 |------|-------------|
-| 📂 `repomap_generate` | Build a map of all resources in your server |
-| 🔍 `tool_search` | Search Lua/JS files across your resources |
-| ✅ `tool_syntax_check` | Check Lua syntax (embedded LuaJIT — no external binary needed) |
-| 📋 `read_latest_logs` | Tail FXServer and resource logs |
-| 🗃 `tool_mysql_query` | Run queries against your FiveM MySQL database |
-| 🖥 `tool_server_control` | Start, stop, restart the FXServer via txAdmin or custom panel |
-| 🔌 `tool_resource_control` | Start/stop/restart individual resources |
+| 🛡 `scan_security` / `scan_security_all` | Detect injection, auth bypass, and logic vulnerabilities |
+| 🏥 `resource_health_check` | Validate manifest, syntax, NUI build, dependencies |
+| ✅ `tool_validate_resource` | Full resource validation (fxmanifest, Lua syntax, structure) |
+| 🎯 `trace_event_flow` | Trace any event from trigger to handler across resources |
+| 🗺 `show_dependency_graph` | Map every resource dependency across your server |
+| 🔎 `detect_anti_patterns` / `detect_duplicate_code` | Flag common FiveM mistakes and copy-pasted logic |
+| 📐 `validate_load_order` / `validate_export_contracts` | Catch load-order and export/import mismatches |
+| 🔗 `find_exports` / `find_event_handlers` / `find_triggers` | Locate exports, handlers, and triggers anywhere |
+| 🧩 `pattern_list` / `pattern_apply` | Scaffold resources from reusable templates |
+| ✅ `tool_syntax_check` | Check Lua syntax (built-in checker — no external binary needed) |
+
+### Server & files (local)
+
+| Tool | What it does |
+|------|-------------|
+| 📂 `repomap_generate` / `tool_search` | Map and search all resources in your server |
+| 🗃 `tool_mysql_query` / `mysql_list_databases` / `mysql_visualize_schema` | Query and inspect your FiveM MySQL databases |
+| 🖥 `tool_server_control` / `tool_resource_control` | Start, stop, restart the FXServer or individual resources |
 | 📡 `tool_server_console` | Send console commands |
-| 🔑 `tool_ssh_run/ls/read/write` | Full SSH access to your remote server |
-| 🚀 `deploy_resource` | Deploy a resource directly to production |
-| 🧠 `context_remember` | Store persistent notes across AI sessions |
+| 📋 `read_latest_logs` | Tail FXServer and resource logs |
+| 🔑 `tool_ssh_run/ls/read/write` · 🚀 `deploy_resource` | Full SSH access and deploy to your remote server |
+| 🧠 `context_remember` / `context_recall` | Persistent notes across AI sessions |
 | ℹ️ `tool_platform_info` | Show configured OS, paths, and enabled services |
 
----
+### FiveClaw Docs (cloud — free with an account)
 
-## Cloud Tools
-
-Powered by FiveClaw. Requires an API key from [fiveclaw.xyz](https://fiveclaw.xyz).
-
-### fivem-mcp — included on all plans
+Native and framework reference, accessed with a free [API key](https://fiveclaw.xyz/dashboard/keys). Your code is never sent — these are read-only doc lookups.
 
 | | |
 |---|---|
-| 📖 Native docs | Full reference for all 6,400+ FiveM/GTA natives with examples |
-| 🏗 Framework docs | ESX, QBCore, ox_lib, ox_core — guides, functions, patterns |
-| 💡 Best practices | Lua performance, sync patterns, common pitfalls |
-| ⚠️ Error solutions | Database of common FiveM errors with step-by-step fixes |
-| 🌐 Live CFX docs | Fetch live documentation directly from CFX |
-
-### ai-fivem-dev-mcp — Pro
-
-| | |
-|---|---|
-| 🏥 Resource health | Validate manifests, exports, load order |
-| 🛡 Security scanner | Detect injection, auth bypass, and logic vulnerabilities |
-| 🎯 Event tracer | Trace any event from trigger to handler across resources |
-| 📐 Pattern library | Scaffold new resources from reusable team templates |
-| 🔍 Duplicate detector | Find copy-pasted code across your codebase |
-| 📋 Load order validator | Catch server.cfg load order mistakes before they crash your server |
-| 🗺 Dependency graph | Map every resource dependency across your entire server |
-
-### ai-fivem-dev-mcp — Enterprise
-
-| | |
-|---|---|
-| 🧪 Test engine | Run full test suites (`test_resource`, `test_database`) |
-| 🎯 Event testing | Simulate and assert on live network events (`test_event`) |
-| 🔬 Function testing | Unit-test any Lua or JS function in isolation (`test_function`) |
-| 📊 Coverage reports | See exactly which functions and events are tested (`test_coverage`) |
-| ⚙️ Test generation | Auto-generate test stubs from your existing code (`test_generate`) |
-| 🧠 Shared team context | Team knowledge base stored on FiveClaw infrastructure — all members read and write |
+| 📖 `fivem_native` | Full reference for all 6,400+ FiveM/GTA natives with examples |
+| 🏗 `fivem_get_framework_docs` | ESX, QBCore, ox_lib, ox_core — guides, functions, patterns |
+| 💡 `fivem_get_best_practice` | Lua performance, sync patterns, common pitfalls |
+| ⚠️ `fivem_get_error_solution` | Common FiveM errors with step-by-step fixes |
+| 🌐 `fivem_fetch_live_natives` | Fetch live documentation directly from CFX |
 
 ---
 
@@ -170,6 +156,8 @@ Powered by FiveClaw. Requires an API key from [fiveclaw.xyz](https://fiveclaw.xy
 | **macOS** | ✅ Fully supported |
 | **Windows** | ✅ Fully supported |
 
+MySQL and Lua syntax checking work out of the box on every OS — the agent ships a built-in MySQL client and Lua checker, so there's no MariaDB/luac install or path setup.
+
 **Windows note:** Use `python -u -m fiveclaw_agent` as the command (not the `fiveclaw` entry point) to avoid pipe-buffering issues. The setup wizard handles this automatically.
 
 ---
@@ -177,14 +165,13 @@ Powered by FiveClaw. Requires an API key from [fiveclaw.xyz](https://fiveclaw.xy
 ## Requirements
 
 - Python 3.10+
-- A [FiveClaw account](https://fiveclaw.xyz) with an API key
+- A free [FiveClaw account](https://fiveclaw.xyz) — optional, only for the cloud docs
 
 ---
 
 ## License
 
-MIT — free to use, fork, and modify.  
-The `fiveclaw-agent` itself is open source. The cloud tools (fivem-mcp, ai-fivem-dev-mcp) are proprietary services accessed via API key.
+MIT — free to use, fork, and modify. Every tool in this package is open source and runs locally. The FiveClaw Docs service (native/framework reference) is a separate hosted service accessed with a free account key.
 
 ---
 

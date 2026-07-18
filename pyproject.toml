@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fiveclaw-agent"
-version = "1.3.6"
+version = "1.4.0"
 description = "Local MCP agent for FiveClaw — FiveM AI development tools"
 readme = "README.md"
 license = { text = "MIT" }
@@ -14,6 +14,7 @@ dependencies = [
     "paramiko>=3.0",
     "luaparser>=3.1",
     "lupa>=2.0",
+    "pymysql>=1.1",                    # pure-Python MySQL client — no mysql CLI binary needed on any OS
     "python-socketio[client]>=5.11",  # txAdmin live-console channel for tool_server_console
 ]
 

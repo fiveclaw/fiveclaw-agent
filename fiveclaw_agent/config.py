@@ -9,6 +9,15 @@ from pathlib import Path
 _REMOTE_CONFIG_TTL = 3600  # 1 hour
 
 
+def require_secure_url(url: str) -> None:
+    """Require HTTPS for the FiveClaw API URL. Raises ValueError otherwise."""
+    if url.startswith("https://"):
+        return
+    raise ValueError(
+        f"FIVECLAW_API_URL must use HTTPS (got: {url!r}). All API calls are encrypted."
+    )
+
+
 def load_env_file():
     for candidate in [Path.cwd() / ".env", Path(__file__).parent.parent / ".env"]:
         if candidate.exists():
@@ -29,17 +38,14 @@ class Config:
         self.api_key = os.getenv("FIVECLAW_API_KEY", "")
         self.api_url = os.getenv("FIVECLAW_API_URL", "https://fiveclaw.xyz").rstrip("/")
         self.os = os.getenv("OS", "").strip().lower()  # "windows", "linux", "macos"
-        self.mysql_bin_dir = os.getenv("MYSQL_BIN_DIR", "").strip()
         self.luac_path = os.getenv("LUAC_PATH", "").strip()
 
-        if not self.api_key:
-            raise RuntimeError(
-                "FIVECLAW_API_KEY is not set.\n"
-                "Add it to your .env file: FIVECLAW_API_KEY=fc_live_...\n"
-                "Get your key at https://fiveclaw.xyz/dashboard/keys"
-            )
+        # No API key is fine: the agent runs fully local (every analysis/test/server
+        # tool works offline). A key only unlocks the cloud docs/native lookups and
+        # syncs your dashboard's server config — see _fetch_remote_config().
 
-        # Fetch dashboard config once — env vars always take priority over remote
+        # Fetch dashboard config once — env vars always take priority over remote.
+        # Skips the network entirely when keyless.
         remote = self._fetch_remote_config()
 
         # Local project root: env var > remote config > auto-detect
@@ -175,17 +181,17 @@ class Config:
             pass
 
     def _fetch_remote_config(self) -> dict:
-        """Return server config from cache (instant) or network (on first run / stale cache)."""
+        """Return server config from cache (instant) or network (on first run / stale cache).
+        No API key ⇒ no dashboard to sync from: return empty and stay fully local."""
+        if not self.api_key:
+            return {}
+
         cached = self._load_cached_config()
         if cached is not None:
             return cached
 
         import ssl, urllib.request, urllib.error
-        if not self.api_url.startswith("https://"):
-            raise ValueError(
-                f"FIVECLAW_API_URL must use HTTPS (got: {self.api_url!r}). "
-                "All API calls must be encrypted."
-            )
+        require_secure_url(self.api_url)
         ctx = ssl.create_default_context()
         ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         try:

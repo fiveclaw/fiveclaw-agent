@@ -1,8 +1,9 @@
 """
 Local tool implementations — file I/O, SSH, MySQL, txAdmin.
-These run entirely on the user's machine. No source logic is sent to the VPS.
+These run entirely on the user's machine. No source logic is sent to FiveClaw.
 """
 
+import asyncio
 import json
 import os
 import re
@@ -170,11 +171,33 @@ class FileTool:
 
         return json.dumps({"matches": matches, "count": len(matches)})
 
-    async def file_info(self, file_path: str) -> str:
+    def _resolve_file(self, file_path: str) -> Optional[Path]:
+        """Resolve a file path tolerant of the caller's base convention:
+        absolute / cwd-relative first, then project_root-relative and
+        resources_dir-relative, and finally the FiveM [category] layout
+        (e.g. 'qbx_core/client/main.lua' living under resources/[qbx]/).
+        Returns None if it can't be found. Both file_info and syntax_check
+        share this so they no longer disagree on the path base."""
         p = Path(file_path)
-        if not p.exists():
-            p = self.config.project_root / file_path
-        if not p.exists():
+        if p.exists():
+            return p
+        for base in (self.config.resources_dir, self.config.project_root):
+            if base:
+                cand = base / file_path
+                if cand.exists():
+                    return cand
+        rdir = self.config.resources_dir
+        if rdir and rdir.exists():
+            for cat in rdir.iterdir():
+                if cat.is_dir() and cat.name.startswith("["):
+                    cand = cat / file_path
+                    if cand.exists():
+                        return cand
+        return None
+
+    async def file_info(self, file_path: str) -> str:
+        p = self._resolve_file(file_path)
+        if p is None:
             return json.dumps({"error": f"File not found: {file_path}"})
 
         stat = p.stat()
@@ -191,10 +214,8 @@ class FileTool:
         })
 
     async def syntax_check(self, file_path: str) -> str:
-        p = Path(file_path)
-        if not p.exists():
-            p = self.config.resources_dir / file_path
-        if not p.exists():
+        p = self._resolve_file(file_path)
+        if p is None:
             return json.dumps({"error": f"File not found: {file_path}"})
 
         code = p.read_text(errors="ignore")
@@ -271,43 +292,43 @@ class MySQLTool:
     def __init__(self, config: Config):
         self.config = config
 
-    def _resolve_mysql_bin(self) -> tuple[Optional[str], Optional[str]]:
-        """Locate the mysql client binary. Returns (path, error_json_str)."""
-        # Explicit MYSQL_BIN_DIR takes priority — avoids Windows PATH inheritance issues
-        if self.config.mysql_bin_dir:
-            import sys as _sys
-            _exe = "mysql.exe" if _sys.platform == "win32" else "mysql"
-            return str(Path(self.config.mysql_bin_dir) / _exe), None
-
-        mysql_bin = shutil.which("mysql")
-        if mysql_bin is None:
-            import sys as _sys
-            if _sys.platform == "win32":
-                import glob as _glob
-                for _pattern in [
-                    r"C:\Program Files\MariaDB*\bin\mysql.exe",
-                    r"C:\Program Files\MySQL\MySQL Server*\bin\mysql.exe",
-                    r"C:\Program Files (x86)\MariaDB*\bin\mysql.exe",
-                    r"C:\Program Files (x86)\MySQL\MySQL Server*\bin\mysql.exe",
-                ]:
-                    _found = _glob.glob(_pattern)
-                    if _found:
-                        mysql_bin = _found[0]
-                        break
-        if mysql_bin is None:
-            return None, json.dumps({"error": "mysql client not found. Set MYSQL_BIN_DIR to your MariaDB/MySQL bin directory (e.g. C:/Program Files/MariaDB 12.2/bin)."})
-        return mysql_bin, None
-
-    def _run_sql(self, mysql_bin: str, db: dict, sql: str) -> subprocess.CompletedProcess:
-        cmd = [
-            mysql_bin,
-            "-h", db.get("host", "127.0.0.1"),
-            "-P", str(db.get("port", 3306)),
-            "-u", db["user"],
-            f"-p{db['password']}",
-            "-N", "-e", sql, db["database"],
-        ]
-        return subprocess.run(cmd, capture_output=True, text=True)
+    def _run_sql(self, db: dict, sql: str) -> tuple[Optional[list], Optional[str]]:
+        """Run a single SQL statement via PyMySQL — a pure-Python driver, so no
+        `mysql` client binary is needed on any OS (removes the old Windows PATH /
+        Program Files hunting). Returns (rows, error): rows is a list of row-lists
+        with every cell stringified and NULL rendered as "NULL", matching the tab
+        output the old `mysql -N -e` CLI produced, so downstream parsing is unchanged.
+        autocommit mirrors the CLI's batch-mode behaviour (writes persist)."""
+        try:
+            import pymysql
+        except ImportError:
+            return None, "pymysql is not installed — add it to the agent dependencies (pip install pymysql)."
+        conn = None
+        try:
+            conn = pymysql.connect(
+                host=db.get("host", "127.0.0.1"),
+                port=int(db.get("port", 3306)),
+                user=db["user"],
+                password=db.get("password", ""),
+                database=db["database"],
+                connect_timeout=10,
+                read_timeout=30,
+                charset="utf8mb4",
+                autocommit=True,
+            )
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                fetched = cur.fetchall() or ()
+            rows = [["NULL" if v is None else str(v) for v in row] for row in fetched]
+            return rows, None
+        except Exception as e:
+            return None, str(e)
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     async def query(self, query: str, db_name: str = "default") -> str:
         if not self.config.has_mysql(db_name):
@@ -318,16 +339,11 @@ class MySQLTool:
                 "setup": "Set MYSQL_USER/MYSQL_PASSWORD/MYSQL_DATABASE for default, or MYSQL_EXTRA_DBS for named databases.",
             })
 
-        mysql_bin, err = self._resolve_mysql_bin()
-        if err is not None:
-            return err
-
         db = self.config.get_db(db_name)
-        result = self._run_sql(mysql_bin, db, query)
-        if result.returncode != 0:
-            return json.dumps({"error": result.stderr.strip()})
+        rows, err = self._run_sql(db, query)
+        if err is not None:
+            return json.dumps({"error": err})
 
-        rows = [line.split("\t") for line in result.stdout.strip().splitlines() if line]
         return json.dumps({
             "success": True,
             "rows": rows,
@@ -339,10 +355,6 @@ class MySQLTool:
     async def list_databases(self) -> str:
         """List every configured MySQL connection (default + extra databases) with
         its alias, real database, host:port, and table list (via SHOW TABLES)."""
-        mysql_bin, err = self._resolve_mysql_bin()
-        if err is not None:
-            return err
-
         # Build the alias → connection map: 'default' plus every extra database.
         connections = [("default", self.config.mysql)]
         for alias, db in self.config.extra_databases.items():
@@ -360,15 +372,11 @@ class MySQLTool:
                 databases.append(entry)
                 continue
             try:
-                result = self._run_sql(mysql_bin, db, "SHOW TABLES")
-                if result.returncode != 0:
-                    entry["error"] = result.stderr.strip()
+                rows, err = self._run_sql(db, "SHOW TABLES")
+                if err is not None:
+                    entry["error"] = err
                 else:
-                    entry["tables"] = [
-                        line.strip()
-                        for line in result.stdout.strip().splitlines()
-                        if line.strip()
-                    ]
+                    entry["tables"] = [row[0] for row in rows if row and row[0]]
                     entry["table_count"] = len(entry["tables"])
             except Exception as e:
                 entry["error"] = str(e)
@@ -391,37 +399,31 @@ class MySQLTool:
                 "available": available,
             })
 
-        mysql_bin, err = self._resolve_mysql_bin()
-        if err is not None:
-            return err
-
         db = self.config.get_db(db_name)
 
-        tbl = self._run_sql(mysql_bin, db, "SHOW TABLES")
-        if tbl.returncode != 0:
-            return json.dumps({"error": tbl.stderr.strip()})
-        table_names = [l.strip() for l in tbl.stdout.strip().splitlines() if l.strip()]
+        table_rows, err = self._run_sql(db, "SHOW TABLES")
+        if err is not None:
+            return json.dumps({"error": err})
+        table_names = [row[0] for row in table_rows if row and row[0]]
 
         tables = []
         for name in table_names:
-            cols = self._run_sql(mysql_bin, db, f"DESCRIBE `{name}`")
+            col_rows, cols_err = self._run_sql(db, f"DESCRIBE `{name}`")
             columns = []
-            if cols.returncode == 0:
-                for row in cols.stdout.strip().splitlines():
-                    c = row.split("\t")
+            if cols_err is None:
+                for c in col_rows:
                     if len(c) >= 4:
                         columns.append({"name": c[0], "type": c[1], "null": c[2], "key": c[3]})
-            fks = self._run_sql(
-                mysql_bin, db,
+            fk_rows, fks_err = self._run_sql(
+                db,
                 "SELECT COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME "
                 "FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE "
                 f"WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{name}' "
                 "AND REFERENCED_TABLE_NAME IS NOT NULL",
             )
             foreign_keys = []
-            if fks.returncode == 0:
-                for row in fks.stdout.strip().splitlines():
-                    f = row.split("\t")
+            if fks_err is None:
+                for f in fk_rows:
                     if len(f) >= 3:
                         foreign_keys.append({"column": f[0], "references_table": f[1], "references_column": f[2]})
             tables.append({"name": name, "columns": columns, "foreign_keys": foreign_keys})
@@ -798,6 +800,161 @@ class CustomPanelTool:
                 return r.read().decode()
         except Exception as e:
             return json.dumps({"error": str(e), "hint": f"Is the panel running at {self._url}?"})
+
+
+# ─── Client Logs (fc-clientlog) ───────────────────────────────────────────────
+
+_LEVEL_SEVERITY = {"info": 1, "warn": 2, "error": 3}
+
+
+class ClientLogTool:
+    """Fetches client-side logs captured by the companion `fc-clientlog` resource.
+
+    Triggers a fresh dump over the same console channel `tool_server_console` uses
+    (`fc_clientlog_get <player_id>`), then reads the JSON file fc-clientlog writes to
+    disk — a direct local file read, no network round trip.
+    """
+
+    _POLL_TIMEOUT = 3.0
+    _POLL_INTERVAL = 0.1
+    _HARD_CAP = 200
+
+    def __init__(self, config: Config, console):
+        self.config = config
+        self.console = console  # TxAdminTool or CustomPanelTool — both expose server_console()
+
+    def _find_resource_dir(self) -> Optional[Path]:
+        """Locate the fc-clientlog resource dir — direct path first, then one level
+        of category subdirs (e.g. [local]/fc-clientlog). Mirrors the resource lookup
+        used by collect_resource_files/DeployTool.deploy."""
+        resources_dir = self.config.resources_dir
+        if not resources_dir.exists():
+            return None
+        direct = resources_dir / "fc-clientlog"
+        if direct.exists():
+            return direct
+        for cat in resources_dir.iterdir():
+            if cat.is_dir():
+                candidate = cat / "fc-clientlog"
+                if candidate.exists():
+                    return candidate
+        return None
+
+    @staticmethod
+    def _severity(level: str) -> int:
+        return _LEVEL_SEVERITY.get((level or "").lower(), 1)
+
+    @staticmethod
+    def _relative_time(ts, now: float) -> str:
+        if not ts:
+            return "unknown"
+        delta = max(0, int(now - ts))
+        if delta < 60:
+            return f"{delta}s ago"
+        if delta < 3600:
+            return f"{delta // 60}m ago"
+        if delta < 86400:
+            return f"{delta // 3600}h ago"
+        return time.strftime("%Y-%m-%d %H:%M", time.localtime(ts))
+
+    async def get_client_logs(self, player_id: int, level: str = "warn",
+                               limit: int = 50, since: Optional[int] = None) -> str:
+        level = (level or "warn").lower()
+        if level not in _LEVEL_SEVERITY:
+            return json.dumps({"error": f"invalid level '{level}' — must be one of: error, warn, info"})
+
+        limit = max(1, min(int(limit), self._HARD_CAP))
+        min_severity = _LEVEL_SEVERITY[level]
+
+        resource_dir = self._find_resource_dir()
+        if resource_dir is None:
+            return json.dumps({
+                "error": "fc-clientlog resource not found in resources dir",
+                "hint": "Install and `ensure` the fc-clientlog resource so client logs can be captured.",
+            })
+
+        dump_path = resource_dir / "dumps" / f"{player_id}.json"
+
+        # Trigger a fresh dump over the same console channel tool_server_console uses.
+        send_time = time.time()
+        await self.console.server_console(f"fc_clientlog_get {player_id}")
+
+        # Poll for the dump file to be (re)written after we sent the command.
+        deadline = send_time + self._POLL_TIMEOUT
+        fresh = False
+        while time.time() < deadline:
+            if dump_path.exists() and dump_path.stat().st_mtime >= send_time - 0.05:
+                fresh = True
+                break
+            await asyncio.sleep(self._POLL_INTERVAL)
+
+        if not fresh:
+            return json.dumps({
+                "error": f"no response from client {player_id} (offline, fc-clientlog not running, or capture disabled)",
+            })
+
+        try:
+            data = json.loads(dump_path.read_text(errors="ignore"))
+        except Exception as e:
+            return json.dumps({"error": f"malformed dump file for player {player_id}: {e}"})
+
+        if isinstance(data, dict):
+            if data.get("error"):
+                return json.dumps({"error": f"fc-clientlog: {data['error']}", "player_id": player_id})
+            entries = data.get("entries", []) or []
+            player_name = data.get("player_name") or data.get("name") or f"player {player_id}"
+            total_captured = data.get("total_captured", len(entries))
+        elif isinstance(data, list):
+            entries = data
+            player_name = f"player {player_id}"
+            total_captured = len(entries)
+        else:
+            return json.dumps({"error": f"unexpected dump format for player {player_id}"})
+
+        filtered = []
+        for e in entries:
+            if not isinstance(e, dict):
+                continue
+            if self._severity(e.get("level", "info")) < min_severity:
+                continue
+            ts = e.get("ts", 0) or 0
+            if since is not None and ts < since:
+                continue
+            filtered.append(e)
+
+        filtered.sort(key=lambda e: e.get("ts", 0) or 0, reverse=True)
+        dropped = len(entries) - len(filtered)
+        shown = filtered[:limit]
+        truncated = len(filtered) > limit
+
+        now = time.time()
+        lines = []
+        for e in shown:
+            lvl = (e.get("level") or "info").upper()
+            tag = e.get("tag", "?")
+            msg = e.get("message", "")
+            count = e.get("count", 1) or 1
+            count_str = f" (×{count})" if count > 1 else ""
+            when = self._relative_time(e.get("ts"), now)
+            lines.append(f"[{lvl}] {tag}: {msg}{count_str} — {when}")
+
+        header = (
+            f"fc-clientlog: {player_name} (id {player_id}) — "
+            f"{total_captured} captured, {len(shown)} shown, {dropped} dropped (level={level}+)"
+        )
+        if truncated:
+            header += f" [truncated to {limit} of {len(filtered)} matching]"
+
+        return json.dumps({
+            "success": True,
+            "player_id": player_id,
+            "player_name": player_name,
+            "total_captured": total_captured,
+            "shown": len(shown),
+            "dropped": dropped,
+            "truncated": truncated,
+            "log": "\n".join([header] + lines),
+        })
 
 
 # ─── SSH ──────────────────────────────────────────────────────────────────────
