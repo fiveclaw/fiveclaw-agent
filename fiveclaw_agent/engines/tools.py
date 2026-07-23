@@ -17,26 +17,62 @@ from .config import Config
 from .patterns_data import PATTERNS, apply_template_variables
 
 
+def _normalize_cfxlua(code: str) -> str:
+    """Rewrite CfxLua-only syntax into parser-valid vanilla Lua so a vanilla parser
+    (luac / lupa's LuaJIT / luaparser) doesn't FALSE-flag it. FiveM's CfxLua adds
+    extensions the game accepts but stock parsers reject — most commonly safe
+    navigation (`a?.b`, `a?[k]`) and compound assignment (`x += y`, `-=`, `*=`, `/=`,
+    `%=`, `^=`, `..=`). These are the '18 syntax errors in qbx_core' class of false
+    positive.
+
+    The rewrites only REMOVE/REPLACE characters without ever adding or removing a
+    string/comment delimiter, so applying them across the whole file (even inside a
+    string or comment) leaves the file's *syntactic* validity unchanged — which is all
+    a syntax check cares about. That's why this needs no full Lua lexer.
+
+    Semantics are intentionally NOT preserved (`x += y` becomes `x = y`); we only ever
+    ask 'does it parse?', never run the result."""
+    # safe navigation → normal indexing. Vanilla Lua has no '?' operator, so any '?.'
+    # or '?[' is either CfxLua safe-nav (rewrite it) or inside a string/comment (a
+    # harmless char swap that keeps the literal valid).
+    code = code.replace("?.", ".").replace("?[", "[")
+    # compound assignment → plain assignment. Operator set excludes ==, ~=, <=, >=, so
+    # those comparisons are untouched. Guard ..= so it never eats the last two dots of
+    # a '...=' (which is invalid Lua anyway).
+    code = re.sub(r"(?<!\.)\.\.=", "=", code)               # ..=  (concat-assign)
+    code = re.sub(r"([-+*/%^])=(?!=)", "=", code)           # += -= *= /= %= ^=
+    return code
+
+
 def _lua_syntax_check(file_path) -> tuple:
-    """Check one Lua file's syntax, cross-platform. Prefers the `luac` binary
-    (best error positions) when present; otherwise falls back to `lupa` (embedded
-    LuaJIT — a bundled dependency, so this works on Windows/macOS with no luac
-    installed) and then `luaparser`. Returns (valid: bool, error: Optional[str]).
-    This is what lets the resource validators check syntax on any OS instead of
-    skipping it when the luac binary is absent."""
+    """Check one Lua file's syntax, cross-platform + CfxLua-aware. Normalizes CfxLua
+    extensions first (see _normalize_cfxlua), then prefers the `luac` binary (best
+    error positions) when present; otherwise falls back to `lupa` (embedded LuaJIT — a
+    bundled dependency, so this works on Windows/macOS with no luac installed) and then
+    `luaparser`. Returns (valid: bool, error: Optional[str])."""
     p = Path(file_path)
-    # 1. luac binary — exact positions when it's installed
     try:
-        r = subprocess.run(["luac", "-p", str(p)], capture_output=True, text=True, timeout=5)
-        if r.returncode == 0:
-            return True, None
-        return False, (r.stderr.strip() or "syntax error")
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass  # not installed, or hung — use an in-process checker instead
+        raw = p.read_text(errors="ignore")
+    except Exception as e:
+        return False, str(e)[:200]
+    code = _normalize_cfxlua(raw)
+    had_cfxlua = code != raw
+    # 1. luac binary — exact positions. Only usable on the ORIGINAL file, and only when
+    #    there's no CfxLua to normalize (luac reads the path directly and would reject
+    #    CfxLua). With CfxLua present, skip to the in-process checkers, which run on the
+    #    normalized string. Newlines are never changed, so reported line numbers stay
+    #    accurate either way.
+    if not had_cfxlua:
+        try:
+            r = subprocess.run(["luac", "-p", str(p)], capture_output=True, text=True, timeout=5)
+            if r.returncode == 0:
+                return True, None
+            return False, (r.stderr.strip() or "syntax error")
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass  # not installed, or hung — use an in-process checker instead
     # 2. lupa (embedded LuaJIT) — cross-platform, bundled dependency
     try:
         import lupa
-        code = p.read_text(errors="ignore")
         rt = lupa.LuaRuntime(unpack_returned_tuples=True)
         checker = rt.eval(
             'function(code, name) '
@@ -54,13 +90,26 @@ def _lua_syntax_check(file_path) -> tuple:
     try:
         from luaparser import ast as _lua_ast
         try:
-            _lua_ast.parse(p.read_text(errors="ignore"))
+            _lua_ast.parse(code)
             return True, None
         except Exception as e:
             return False, str(e)[:200]
     except ImportError:
         pass
     return True, None  # no checker at all (shouldn't happen — lupa+luaparser are deps); don't block
+
+
+def _declared_file_missing(resource_dir: Path, rel: str) -> bool:
+    """Is a manifest-declared script/file path actually missing? FiveM manifests allow
+    GLOB patterns (e.g. `modules/*.lua`, `**/*.lua`), which FXServer expands at load —
+    so expand them here too instead of stat-ing the literal pattern (which always
+    'misses'). A non-glob path is missing iff it doesn't exist."""
+    if any(c in rel for c in "*?["):
+        try:
+            return not any(resource_dir.glob(rel))
+        except (ValueError, OSError):
+            return False  # malformed/odd pattern → don't false-flag it as missing
+    return not (resource_dir / rel).exists()
 
 
 @contextmanager
@@ -1329,18 +1378,18 @@ class ValidationTool:
                         content, re.DOTALL
                     ):
                         for file_match in re.finditer(r"['\"]([^'\"@][^'\"]*\.(?:lua|js|html|css))['\"]", block_match.group(1)):
-                            script_path = resource_dir / file_match.group(1)
-                            if not script_path.exists() and not file_match.group(1).startswith("@"):
-                                missing_scripts.append(file_match.group(1))
+                            rel = file_match.group(1)
+                            if not rel.startswith("@") and _declared_file_missing(resource_dir, rel):
+                                missing_scripts.append(rel)
 
                     # Also check single-string forms: client_script 'file.lua'
                     for single_match in re.finditer(
                         r"(?:client_script|server_script|shared_script)\s+['\"]([^'\"@][^'\"]*\.lua)['\"]",
                         content
                     ):
-                        script_path = resource_dir / single_match.group(1)
-                        if not script_path.exists():
-                            missing_scripts.append(single_match.group(1))
+                        rel = single_match.group(1)
+                        if _declared_file_missing(resource_dir, rel):
+                            missing_scripts.append(rel)
 
                     health["checks"]["all_scripts_exist"] = len(missing_scripts) == 0
                     if missing_scripts:
@@ -3710,11 +3759,28 @@ class DependencyTool:
             # Check ensure order
             order_issues: List[Dict] = []
             ensure_set = set(ensure_order)
+            # Bracket-folder ensures: `ensure [cat]` loads EVERY resource inside
+            # resources/[cat]/ (FXServer expands it). Expand them so (a) an existing
+            # [cat] isn't reported "missing from disk" and (b) a dependency satisfied by
+            # a bracket-folder ensure isn't falsely flagged as absent from the ensure list.
+            bracket_ensures = {e for e in ensure_order if e.startswith("[") and e.endswith("]")}
+            covered_by_bracket: set = set()
+            for cat in bracket_ensures:
+                cat_dir = resources_dir / cat
+                if cat_dir.is_dir():
+                    cat_res = cat_dir.resolve()
+                    for rname, rpath in resources.items():
+                        try:
+                            Path(rpath).resolve().relative_to(cat_res)
+                            covered_by_bracket.add(rname)
+                        except (ValueError, OSError):
+                            pass
+            effective_ensure = ensure_set | covered_by_bracket
 
             for i, resource in enumerate(ensure_order):
                 deps = graph.get(resource, [])
                 for dep in deps:
-                    if dep in ensure_set:
+                    if dep in effective_ensure:
                         dep_idx = ensure_order.index(dep) if dep in ensure_order else -1
                         if dep_idx > i:
                             order_issues.append({
@@ -3739,6 +3805,9 @@ class DependencyTool:
             not_on_disk = [
                 r for r in ensure_order
                 if r not in resources and not r.startswith("@")
+                # a bracket-folder ensure that exists on disk isn't "missing" — FXServer
+                # loads the whole [cat]/ folder, whose resources ARE discovered above.
+                and not (r in bracket_ensures and (resources_dir / r).is_dir())
             ]
             # Split into truly missing vs. known external/builtin
             truly_missing = [r for r in not_on_disk if r not in FIVEM_BUILTINS]
